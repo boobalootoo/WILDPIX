@@ -1,0 +1,969 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Voxel Model Uploader</title>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/three@0.128/examples/js/controls/OrbitControls.js"></script>
+    <style>
+        body {
+            margin: 0;
+            overflow: hidden;
+            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+            color: #fff;
+            background-color: #121212;
+        }
+
+        #container {
+            position: absolute;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 100%;
+            z-index: 1;
+        }
+
+        #ui {
+            position: absolute;
+            top: 20px;
+            left: 20px;
+            z-index: 2;
+            padding: 12px;
+            background-color: rgba(255, 255, 255, 0.1);
+            border-radius: 12px;
+            backdrop-filter: blur(10px);
+            border: 1px solid rgba(255, 255, 255, 0.2);
+            box-shadow: 0 4px 30px rgba(0, 0, 0, 0.2);
+            display: flex;
+            flex-direction: column;
+            gap: 8px;
+            text-align: center;
+            transition: all 0.5s ease-in-out;
+            max-width: 220px;
+            width: 90%;
+            max-height: 90vh;
+            overflow-y: auto;
+        }
+
+        #ui-header {
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            position: relative;
+        }
+
+        h1 {
+            font-size: 1em;
+            margin: 0;
+            text-shadow: 2px 2px 4px rgba(0, 0, 0, 0.5);
+        }
+
+        #toggle-button {
+            position: absolute;
+            right: -10px;
+            top: 50%;
+            transform: translateY(-50%);
+            width: 22px;
+            height: 22px;
+            border-radius: 50%;
+            background: rgba(255, 255, 255, 0.2);
+            color: white;
+            border: none;
+            cursor: pointer;
+            font-size: 0.9em;
+            line-height: 1;
+            transition: transform 0.3s ease;
+            box-shadow: 0 2px 5px rgba(0, 0, 0, 0.3);
+        }
+
+        #toggle-button.collapsed {
+            transform: translateY(-50%) rotate(180deg);
+        }
+
+        #ui-content {
+            overflow: visible;
+            transition: max-height 0.5s ease-in-out, opacity 0.5s ease-in-out;
+            opacity: 1;
+            display: flex;
+            flex-direction: column;
+            gap: 8px;
+        }
+
+        #ui-content.collapsed {
+            max-height: 0;
+            opacity: 0;
+            overflow: hidden;
+        }
+
+        p {
+            font-size: 0.7em;
+            margin: 0;
+            opacity: 0.8;
+        }
+
+        #fileInput, #imageInput {
+            display: none;
+        }
+
+        .custom-file-upload, .ui-btn {
+            border: 2px solid #fff;
+            padding: 5px 10px;
+            border-radius: 8px;
+            cursor: pointer;
+            transition: background-color 0.3s ease, transform 0.2s ease;
+            font-weight: bold;
+            text-shadow: 1px 1px 2px rgba(0, 0, 0, 0.3);
+            display: block;
+            font-size: 0.8em;
+            background: transparent;
+            color: white;
+            text-align: center;
+            -webkit-appearance: none;
+        }
+
+        .custom-file-upload:hover, .ui-btn:hover {
+            background-color: rgba(255, 255, 255, 0.2);
+            transform: scale(1.05);
+        }
+
+        .slider-container {
+            margin-top: 5px;
+        }
+
+        .slider-container label {
+            display: block;
+            font-size: 0.8em;
+            margin-bottom: 2px;
+        }
+
+        .slider-container input[type="range"] {
+            width: 100%;
+            -webkit-appearance: none;
+            height: 5px;
+            background: #d3d3d3;
+            outline: none;
+            opacity: 0.7;
+            transition: opacity .2s;
+            border-radius: 5px;
+        }
+        
+        .slider-container input[type="range"]::-webkit-slider-thumb {
+            -webkit-appearance: none;
+            appearance: none;
+            width: 15px;
+            height: 15px;
+            background: #fff;
+            cursor: pointer;
+            border-radius: 50%;
+        }
+
+        .slider-container input[type="range"]::-moz-range-thumb {
+            width: 15px;
+            height: 15px;
+            background: #fff;
+            cursor: pointer;
+            border-radius: 50%;
+        }
+
+        .slider-container span {
+            font-size: 0.7em;
+            margin-top: -5px;
+        }
+
+        .color-container {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            gap: 8px;
+        }
+
+        .color-container label {
+            flex-grow: 1;
+            text-align: left;
+            font-size: 0.8em;
+        }
+
+        .color-container input[type="color"] {
+            width: 40px;
+            height: 25px;
+            border: none;
+            padding: 0;
+            border-radius: 5px;
+            cursor: pointer;
+        }
+
+        #backgroundSelect {
+            padding: 5px;
+            border-radius: 6px;
+            border: 1px solid rgba(255, 255, 255, 0.4);
+            background-color: rgba(0, 0, 0, 0.3);
+            color: white;
+            font-size: 0.7em;
+            width: 100%;
+        }
+
+        #status {
+            margin-top: 5px;
+            font-style: italic;
+            opacity: 0.7;
+            min-height: 20px;
+            font-size: 0.7em;
+        }
+
+        .loading::before {
+            content: '';
+            display: inline-block;
+            width: 0.7em;
+            height: 0.7em;
+            border: 2px solid #fff;
+            border-right-color: transparent;
+            border-radius: 50%;
+            animation: spin 1s linear infinite;
+            vertical-align: middle;
+            margin-right: 5px;
+        }
+
+        @keyframes spin {
+            0% { transform: rotate(0deg); }
+            100% { transform: rotate(360deg); }
+        }
+
+        #corner-buttons {
+            display: grid;
+            grid-template-columns: repeat(2, 1fr);
+            gap: 6px;
+        }
+
+        .corner-btn {
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            font-size: 0.7em;
+            padding: 6px;
+            border-radius: 6px;
+            cursor: pointer;
+            transition: background-color 0.2s ease;
+            background-color: rgba(255, 255, 255, 0.05);
+            border: 1px solid rgba(255, 255, 255, 0.1);
+        }
+        
+        .corner-btn.selected {
+            background-color: rgba(255, 255, 255, 0.2);
+            border-color: #fff;
+        }
+
+        .corner-btn .color-box {
+            width: 12px;
+            height: 12px;
+            border-radius: 3px;
+            margin-right: 4px;
+        }
+
+        .corner-btn:hover {
+            background-color: rgba(255, 255, 255, 0.1);
+        }
+    </style>
+</head>
+<body>
+    <div id="ui">
+        <div id="ui-header">
+            <h1>Voxel Model Uploader</h1>
+            <button id="toggle-button">▲</button>
+        </div>
+        <div id="ui-content">
+            <p>Upload a JSON file or an image to visualize your voxel model.</p>
+            <div>
+                <label for="fileInput" class="custom-file-upload">Upload JSON Model</label>
+                <input type="file" id="fileInput" accept=".json">
+            </div>
+            <div>
+                <label for="imageInput" class="custom-file-upload">Upload Image</label>
+                <input type="file" id="imageInput" accept=".png, .jpeg, .jpg">
+            </div>
+            <button id="addGridBtn" class="ui-btn" style="display: none;">Add Grid Cube</button>
+            <button id="convertBtn" class="ui-btn" style="display: none;">Convert to Voxel</button>
+            
+            <div class="slider-container">
+                <label for="xRotationSlider">X Rotation:</label>
+                <input type="range" id="xRotationSlider" min="-180" max="180" value="0">
+                <span id="xRotationValue">0°</span>
+            </div>
+
+            <div class="slider-container">
+                <label for="yRotationSlider">Y Rotation:</label>
+                <input type="range" id="yRotationSlider" min="-180" max="180" value="0">
+                <span id="yRotationValue">0°</span>
+            </div>
+
+            <div class="slider-container">
+                <label for="zRotationSlider">Z Rotation:</label>
+                <input type="range" id="zRotationSlider" min="-180" max="180" value="0">
+                <span id="zRotationValue">0°</span>
+            </div>
+            
+            <div class="slider-container">
+                <label for="resolutionSlider">Vertical Voxels:</label>
+                <input type="range" id="resolutionSlider" min="10" max="200" value="100">
+                <span id="resolutionValue">100</span>
+            </div>
+
+            <hr style="border: 0.5px solid rgba(255,255,255,0.2); width: 100%; margin: 8px 0;">
+            
+            <h3>Grid Options</h3>
+            <div class="slider-container">
+                <label for="lineThicknessSlider">Line Thickness:</label>
+                <input type="range" id="lineThicknessSlider" min="0.5" max="5" value="1" step="0.1">
+                <span id="lineThicknessValue">1.0</span>
+            </div>
+
+            <div class="color-container">
+                <label for="lineColorPicker">Line Color:</label>
+                <input type="color" id="lineColorPicker" value="#00ff00">
+            </div>
+
+            <div class="slider-container">
+                <label for="sectionsSlider">Number of Sections:</label>
+                <input type="range" id="sectionsSlider" min="1" max="50" value="1">
+                <span id="sectionsValue">1</span>
+            </div>
+            
+            <div id="corner-controls" style="display: none;">
+                <h4 style="margin: 8px 0;">Adjust Corners</h4>
+                <div id="corner-buttons">
+                    <!-- Buttons will be generated by JS -->
+                </div>
+            </div>
+
+            <div>
+                <label for="backgroundSelect">Background:</label>
+                <select id="backgroundSelect">
+                    <option value="#121212">Dark Grey</option>
+                    <option value="#FFFFFF">White</option>
+                    <option value="image">Image</option>
+                </select>
+            </div>
+            <button id="downloadBtn" class="ui-btn" style="display: none;">Download Model</button>
+            <div id="status"></div>
+        </div>
+    </div>
+    <div id="container"></div>
+
+    <script>
+        let scene, camera, renderer, controls;
+        let voxelGroup = new THREE.Group();
+        let gridHelper, imagePlane;
+        const statusDiv = document.getElementById('status');
+        const fileInput = document.getElementById('fileInput');
+        const imageInput = document.getElementById('imageInput');
+        const addGridBtn = document.getElementById('addGridBtn');
+        const convertBtn = document.getElementById('convertBtn');
+        const resolutionSlider = document.getElementById('resolutionSlider');
+        const resolutionValueSpan = document.getElementById('resolutionValue');
+        const backgroundSelect = document.getElementById('backgroundSelect');
+        const downloadBtn = document.getElementById('downloadBtn');
+        const toggleButton = document.getElementById('toggle-button');
+        const uiContent = document.getElementById('ui-content');
+        const cornerControls = document.getElementById('corner-controls');
+        const cornerButtonsContainer = document.getElementById('corner-buttons');
+
+        const xRotationSlider = document.getElementById('xRotationSlider');
+        const yRotationSlider = document.getElementById('yRotationSlider');
+        const zRotationSlider = document.getElementById('zRotationSlider');
+        const xRotationValueSpan = document.getElementById('xRotationValue');
+        const yRotationValueSpan = document.getElementById('yRotationValue');
+        const zRotationValueSpan = document.getElementById('zRotationValue');
+
+        const lineThicknessSlider = document.getElementById('lineThicknessSlider');
+        const lineThicknessValueSpan = document.getElementById('lineThicknessValue');
+        const lineColorPicker = document.getElementById('lineColorPicker');
+        const sectionsSlider = document.getElementById('sectionsSlider');
+        const sectionsValueSpan = document.getElementById('sectionsValue');
+        
+        let currentVoxelData = null;
+        let currentImage = null;
+        
+        let raycaster = new THREE.Raycaster();
+        let mouse = new THREE.Vector2();
+        
+        let isDragging = false;
+        let dragObject = null;
+        let dragStartMousePos = new THREE.Vector3();
+        let dragPlane = null;
+        
+        let corners = [];
+        let selectedCorner = null;
+
+        const cornerColors = [
+            '#FF0000', '#00FF00', '#0000FF', '#FFFF00', // Top corners
+            '#FF00FF', '#00FFFF', '#FFA500', '#800080'  // Bottom corners
+        ];
+        const cornerNames = [
+            'Top Front Right', 'Top Front Left', 'Top Back Left', 'Top Back Right',
+            'Bottom Front Right', 'Bottom Front Left', 'Bottom Back Left', 'Bottom Back Right'
+        ];
+
+        function init() {
+            scene = new THREE.Scene();
+            camera = new THREE.PerspectiveCamera(45, window.innerWidth / window.innerHeight, 0.1, 1000);
+            camera.position.set(0, 0, 150);
+            camera.lookAt(0, 0, 0);
+
+            renderer = new THREE.WebGLRenderer({ antialias: true, alpha: true });
+            renderer.setSize(window.innerWidth, window.innerHeight);
+            renderer.setClearColor(0x000000, 0);
+            document.getElementById('container').appendChild(renderer.domElement);
+
+            const light = new THREE.DirectionalLight(0xffffff, 1);
+            light.position.set(5, 10, 5);
+            scene.add(light);
+            scene.add(new THREE.AmbientLight(0x404040));
+
+            controls = new THREE.OrbitControls(camera, renderer.domElement);
+            controls.enabled = false;
+            
+            renderer.domElement.addEventListener('mousedown', onMouseDown, false);
+            renderer.domElement.addEventListener('mousemove', onMouseMove, false);
+            renderer.domElement.addEventListener('mouseup', onMouseUp, false);
+
+            createCornerButtons();
+        }
+
+        function createCornerButtons() {
+            cornerNames.forEach((name, index) => {
+                const button = document.createElement('button');
+                button.className = 'corner-btn';
+                button.setAttribute('data-index', index);
+                button.innerHTML = `<span class="color-box" style="background-color: ${cornerColors[index]};"></span>${name}`;
+                button.addEventListener('click', () => selectCorner(index));
+                cornerButtonsContainer.appendChild(button);
+            });
+        }
+
+        function selectCorner(index) {
+            if (!gridHelper || !imagePlane) {
+                statusDiv.textContent = "Please add a grid cube first.";
+                return;
+            }
+
+            const corner = corners[index];
+            selectedCorner = corner;
+            
+            // Highlight the selected button and corner
+            document.querySelectorAll('.corner-btn').forEach((btn, i) => {
+                btn.classList.remove('selected');
+                corners[i].material.opacity = 0.5;
+            });
+            document.querySelector(`.corner-btn[data-index="${index}"]`).classList.add('selected');
+            selectedCorner.material.opacity = 1.0;
+            
+            controls.enabled = false;
+            renderer.domElement.style.cursor = 'crosshair';
+            statusDiv.textContent = `Selected "${cornerNames[index]}". Now click on the image to place it.`;
+        }
+
+
+        function clearScene() {
+            // Clears all objects from the scene
+            scene.remove(voxelGroup);
+            if (voxelGroup.children) {
+                voxelGroup.children.forEach(child => {
+                    if (child.geometry) child.geometry.dispose();
+                    if (child.material) child.material.dispose();
+                });
+            }
+            if (gridHelper) {
+                gridHelper.traverse(child => {
+                    if (child.isMesh || child.isLineSegments) {
+                        if (child.geometry) child.geometry.dispose();
+                        if (child.material) child.material.dispose();
+                    }
+                });
+                scene.remove(gridHelper);
+                gridHelper = null;
+                corners = [];
+                cornerControls.style.display = 'none';
+            }
+            if (imagePlane) {
+                scene.remove(imagePlane);
+                imagePlane.geometry.dispose();
+                imagePlane.material.dispose();
+                imagePlane = null;
+            }
+            voxelGroup = new THREE.Group();
+            currentVoxelData = null;
+            downloadBtn.style.display = 'none';
+            convertBtn.style.display = 'none';
+            addGridBtn.style.display = 'none';
+        }
+
+        function loadJSONModel(data) {
+            clearScene();
+            
+            if (!Array.isArray(data)) {
+                statusDiv.textContent = 'Error: JSON file must contain an array of objects.';
+                return;
+            }
+
+            const geometry = new THREE.BoxGeometry(1, 1, 1);
+            let min = new THREE.Vector3(Infinity, Infinity, Infinity);
+            let max = new THREE.Vector3(-Infinity, -Infinity, -Infinity);
+
+            data.forEach(block => {
+                if (block.x === undefined || block.y === undefined || block.z === undefined || block.color === undefined) {
+                    return;
+                }
+                const material = new THREE.MeshStandardMaterial({ color: new THREE.Color(block.color) });
+                const cube = new THREE.Mesh(geometry, material);
+                cube.position.set(block.x, block.y, block.z);
+                voxelGroup.add(cube);
+
+                min.x = Math.min(min.x, block.x);
+                min.y = Math.min(min.y, block.y);
+                min.z = Math.min(min.z, block.z);
+                max.x = Math.max(max.x, block.x);
+                max.y = Math.max(max.y, block.y);
+                max.z = Math.max(max.z, block.z);
+            });
+
+            const center = new THREE.Vector3().addVectors(min, max).multiplyScalar(0.5);
+            voxelGroup.position.sub(center);
+
+            scene.add(voxelGroup);
+            statusDiv.textContent = `JSON model loaded successfully with ${data.length} voxels.`;
+            downloadBtn.style.display = 'block';
+            controls.enabled = true;
+        }
+
+        function loadImagePlane(image) {
+            clearScene();
+            currentImage = image;
+            controls.enabled = false;
+
+            const aspectRatio = image.width / image.height;
+            const planeHeight = 100;
+            const planeWidth = planeHeight * aspectRatio;
+
+            const texture = new THREE.Texture(image);
+            texture.needsUpdate = true;
+            const material = new THREE.MeshBasicMaterial({ map: texture, transparent: true, side: THREE.DoubleSide });
+            const geometry = new THREE.PlaneGeometry(planeWidth, planeHeight);
+            imagePlane = new THREE.Mesh(geometry, material);
+            imagePlane.position.z = -0.01; 
+            scene.add(imagePlane);
+            
+            addGridBtn.style.display = 'block';
+            statusDiv.textContent = 'Image loaded. Click "Add Grid Cube" to begin.';
+        }
+
+        function createGridCube() {
+            // Remove any existing voxels or grids before creating a new one
+            if (voxelGroup.children.length > 0) {
+                 scene.remove(voxelGroup);
+                 voxelGroup = new THREE.Group();
+            }
+            if (gridHelper) {
+                scene.remove(gridHelper);
+            }
+
+            gridHelper = new THREE.Group();
+            // Initial corner positions for a 100x100x100 cube
+            const size = 100;
+            const halfSize = size / 2;
+            const initialCorners = [
+                new THREE.Vector3(halfSize, halfSize, halfSize),
+                new THREE.Vector3(-halfSize, halfSize, halfSize),
+                new THREE.Vector3(-halfSize, -halfSize, halfSize),
+                new THREE.Vector3(halfSize, -halfSize, halfSize),
+                new THREE.Vector3(halfSize, halfSize, -halfSize),
+                new THREE.Vector3(-halfSize, halfSize, -halfSize),
+                new THREE.Vector3(-halfSize, -halfSize, -halfSize),
+                new THREE.Vector3(halfSize, -halfSize, -halfSize)
+            ];
+
+            const cornerGeometry = new THREE.SphereGeometry(2, 8, 8);
+            
+            corners = []; // Clear the corners array
+            initialCorners.forEach((pos, index) => {
+                const cornerMaterial = new THREE.MeshBasicMaterial({ color: cornerColors[index], transparent: true, opacity: 0.5 });
+                const cornerMesh = new THREE.Mesh(cornerGeometry, cornerMaterial);
+                cornerMesh.position.copy(pos);
+                cornerMesh.userData.isCorner = true;
+                cornerMesh.userData.cornerIndex = index;
+                gridHelper.add(cornerMesh);
+                corners.push(cornerMesh);
+            });
+
+            updateGrid();
+            scene.add(gridHelper);
+            
+            convertBtn.style.display = 'block';
+            addGridBtn.style.display = 'none';
+            cornerControls.style.display = 'block';
+            statusDiv.textContent = 'Grid added. Use the buttons or drag to adjust.';
+        }
+
+        function updateGrid() {
+            // Remove old grid lines
+            gridHelper.children.filter(c => c.isLineSegments).forEach(line => {
+                line.geometry.dispose();
+                line.material.dispose();
+                gridHelper.remove(line);
+            });
+
+            // Recreate grid based on corner positions
+            const divisions = parseInt(sectionsSlider.value, 10);
+            const lineColor = new THREE.Color(lineColorPicker.value);
+            const lineThickness = parseFloat(lineThicknessSlider.value);
+            
+            const points = [];
+            
+            const p = corners.map(c => c.position);
+            
+            // Outer box lines
+            points.push(p[0], p[1]); points.push(p[1], p[2]); points.push(p[2], p[3]); points.push(p[3], p[0]);
+            points.push(p[4], p[5]); points.push(p[5], p[6]); points.push(p[6], p[7]); points.push(p[7], p[4]);
+            points.push(p[0], p[4]); points.push(p[1], p[5]); points.push(p[2], p[6]); points.push(p[3], p[7]);
+            
+            // Inner grid lines
+            const a = new THREE.Vector3(), b = new THREE.Vector3();
+            for (let i = 1; i < divisions; i++) {
+                const t = i / divisions;
+                
+                // Lines in X-Y plane
+                a.lerpVectors(p[0], p[1], t); b.lerpVectors(p[3], p[2], t); points.push(a, b);
+                a.lerpVectors(p[1], p[2], t); b.lerpVectors(p[0], p[3], t); points.push(a, b);
+
+                // Lines in X-Z plane
+                a.lerpVectors(p[0], p[4], t); b.lerpVectors(p[3], p[7], t); points.push(a, b);
+                a.lerpVectors(p[4], p[7], t); b.lerpVectors(p[0], p[3], t); points.push(a, b);
+
+                // Lines in Y-Z plane
+                a.lerpVectors(p[1], p[5], t); b.lerpVectors(p[2], p[6], t); points.push(a, b);
+                a.lerpVectors(p[5], p[6], t); b.lerpVectors(p[1], p[2], t); points.push(a, b);
+            }
+
+            const geometry = new THREE.BufferGeometry().setFromPoints(points);
+            const material = new THREE.LineBasicMaterial({ color: lineColor, linewidth: lineThickness });
+            const lines = new THREE.LineSegments(geometry, material);
+            gridHelper.add(lines);
+        }
+
+        function convertImageToVoxel() {
+            if (!currentImage || !gridHelper) {
+                statusDiv.textContent = 'Please load an image and add a grid first.';
+                return;
+            }
+
+            statusDiv.textContent = 'Converting image to voxels...';
+            downloadBtn.style.display = 'none';
+
+            // Hide the image plane and wireframe for rendering the final model
+            if (imagePlane) scene.remove(imagePlane);
+            if (gridHelper) scene.remove(gridHelper);
+
+            // Get the bounding box of the deformed grid
+            const gridBox = new THREE.Box3().setFromObject(gridHelper);
+            const gridWidth = gridBox.max.x - gridBox.min.x;
+            const gridHeight = gridBox.max.y - gridBox.min.y;
+            const gridDepth = gridBox.max.z - gridBox.min.z;
+            
+            const verticalResolution = parseInt(resolutionSlider.value, 10);
+            const horizontalResolution = Math.round(verticalResolution * gridWidth / gridHeight);
+            const depthResolution = Math.round(verticalResolution * gridDepth / gridHeight);
+
+            const canvas = document.createElement('canvas');
+            const ctx = canvas.getContext('2d');
+            canvas.width = horizontalResolution;
+            canvas.height = verticalResolution;
+
+            // Render the portion of the image that's under the grid
+            const imagePlaneBox = new THREE.Box3().setFromObject(imagePlane);
+            const imageX = ((gridBox.min.x - imagePlaneBox.min.x) / imagePlaneBox.max.x) * currentImage.width / 2;
+            const imageY = (1 - (gridBox.max.y - imagePlaneBox.min.y) / imagePlaneBox.max.y) * currentImage.height;
+            const imageW = (gridWidth / imagePlane.geometry.parameters.width) * currentImage.width;
+            const imageH = (gridHeight / imagePlane.geometry.parameters.height) * currentImage.height;
+            
+            ctx.drawImage(currentImage, imageX, imageY, imageW, imageH, 0, 0, horizontalResolution, verticalResolution);
+
+            const imageData = ctx.getImageData(0, 0, horizontalResolution, verticalResolution).data;
+            
+            clearScene();
+            voxelGroup = new THREE.Group();
+            currentVoxelData = [];
+            const voxelSizeX = gridWidth / horizontalResolution;
+            const voxelSizeY = gridHeight / verticalResolution;
+            const voxelSizeZ = gridDepth / depthResolution;
+
+            for (let z = 0; z < depthResolution; z++) {
+                for (let y = 0; y < verticalResolution; y++) {
+                    for (let x = 0; x < horizontalResolution; x++) {
+                        const i = (y * horizontalResolution + x) * 4;
+                        const r = imageData[i];
+                        const g = imageData[i + 1];
+                        const b = imageData[i + 2];
+                        const a = imageData[i + 3];
+
+                        if (a > 0) {
+                            const geometry = new THREE.BoxGeometry(voxelSizeX, voxelSizeY, voxelSizeZ);
+                            const material = new THREE.MeshStandardMaterial({ color: new THREE.Color(`rgb(${r}, ${g}, ${b})`) });
+                            const cube = new THREE.Mesh(geometry, material);
+                            cube.position.set(
+                                gridBox.min.x + (x + 0.5) * voxelSizeX,
+                                gridBox.min.y + (y + 0.5) * voxelSizeY,
+                                gridBox.min.z + (z + 0.5) * voxelSizeZ
+                            );
+                            voxelGroup.add(cube);
+                            currentVoxelData.push({ x: cube.position.x, y: cube.position.y, z: cube.position.z, color: `rgb(${r}, ${g}, ${b})` });
+                        }
+                    }
+                }
+            }
+            
+            scene.add(voxelGroup);
+            statusDiv.textContent = `Converted to ${horizontalResolution}x${verticalResolution}x${depthResolution} voxel model!`;
+            downloadBtn.style.display = 'block';
+            controls.enabled = true;
+        }
+
+        // Mouse interaction for grid cube
+        function onMouseDown(event) {
+            // Check if we are in corner selection mode
+            if (selectedCorner) {
+                mouse.x = (event.clientX / window.innerWidth) * 2 - 1;
+                mouse.y = -(event.clientY / window.innerHeight) * 2 + 1;
+                raycaster.setFromCamera(mouse, camera);
+                
+                const intersects = raycaster.intersectObject(imagePlane);
+                if (intersects.length > 0) {
+                    selectedCorner.position.copy(intersects[0].point);
+                    selectedCorner.position.z = 0; // Keep the corner on the image plane's Z-axis
+                    updateGrid();
+                    selectedCorner.material.opacity = 0.5;
+                    selectedCorner = null; // Exit placement mode
+                    renderer.domElement.style.cursor = 'default';
+                    document.querySelectorAll('.corner-btn').forEach(btn => btn.classList.remove('selected'));
+                    statusDiv.textContent = 'Corner placed. Drag the grid to move it, or select another corner to place it.';
+                }
+                return;
+            }
+
+            // Only proceed if a grid is present to interact with
+            if (!gridHelper) return;
+
+            mouse.x = (event.clientX / window.innerWidth) * 2 - 1;
+            mouse.y = -(event.clientY / window.innerHeight) * 2 + 1;
+            raycaster.setFromCamera(mouse, camera);
+
+            // 1. Check for the grid lines themselves for dragging the whole cube
+            const gridLines = gridHelper.children.find(c => c.isLineSegments);
+            if (gridLines) {
+                const gridIntersects = raycaster.intersectObject(gridLines);
+                if (gridIntersects.length > 0) {
+                    dragObject = gridHelper;
+                    isDragging = true;
+                    controls.enabled = false;
+                    dragStartMousePos.copy(gridIntersects[0].point);
+                    renderer.domElement.style.cursor = 'grabbing';
+                    return;
+                }
+            }
+            
+            // If nothing is hit, let the OrbitControls work
+            controls.enabled = true;
+        }
+
+        function onMouseMove(event) {
+            if (!isDragging || !dragObject) return;
+
+            mouse.x = (event.clientX / window.innerWidth) * 2 - 1;
+            mouse.y = -(event.clientY / window.innerHeight) * 2 + 1;
+            raycaster.setFromCamera(mouse, camera);
+
+            if (dragObject === gridHelper) {
+                let intersection = new THREE.Vector3();
+                const dragPlane = new THREE.Plane().setFromNormalAndCoplanarPoint(
+                    camera.position.clone().normalize(), dragStartMousePos
+                );
+                raycaster.ray.intersectPlane(dragPlane, intersection);
+                const delta = intersection.clone().sub(dragStartMousePos);
+                gridHelper.position.add(delta);
+                dragStartMousePos.copy(intersection);
+            }
+        }
+
+        function onMouseUp() {
+            isDragging = false;
+            dragObject = null;
+            dragPlane = null;
+            controls.enabled = true;
+            renderer.domElement.style.cursor = 'default';
+        }
+
+        // Handle JSON file upload
+        fileInput.addEventListener('change', (event) => {
+            const file = event.target.files[0];
+            if (!file) return;
+
+            statusDiv.textContent = 'Loading JSON model...';
+            statusDiv.classList.add('loading');
+
+            const reader = new FileReader();
+            reader.onload = (e) => {
+                try {
+                    const json = JSON.parse(e.target.result);
+                    loadJSONModel(json);
+                } catch (error) {
+                    statusDiv.textContent = `Error parsing JSON: ${error.message}`;
+                    console.error('Error parsing JSON:', error);
+                } finally {
+                    statusDiv.classList.remove('loading');
+                }
+            };
+            reader.onerror = () => {
+                statusDiv.textContent = 'Error reading file.';
+                statusDiv.classList.remove('loading');
+            };
+            reader.readAsText(file);
+        });
+        
+        // Handle image file upload
+        imageInput.addEventListener('change', (event) => {
+            const file = event.target.files[0];
+            if (!file) return;
+
+            statusDiv.textContent = 'Loading image...';
+            statusDiv.classList.add('loading');
+            
+            const reader = new FileReader();
+            reader.onload = (e) => {
+                const img = new Image();
+                img.onload = () => {
+                    loadImagePlane(img);
+                    statusDiv.classList.remove('loading');
+                };
+                img.onerror = () => {
+                    statusDiv.textContent = 'Error loading image.';
+                    statusDiv.classList.remove('loading');
+                };
+                img.src = e.target.result;
+            };
+            reader.onerror = () => {
+                statusDiv.textContent = 'Error reading file.';
+                statusDiv.classList.remove('loading');
+            };
+            reader.readAsDataURL(file);
+        });
+
+        // Handle add grid button click
+        addGridBtn.addEventListener('click', createGridCube);
+
+        // Handle conversion
+        convertBtn.addEventListener('click', convertImageToVoxel);
+
+        // Update resolution value from slider
+        resolutionSlider.addEventListener('input', () => {
+            resolutionValueSpan.textContent = resolutionSlider.value;
+        });
+
+        // Update rotation values from sliders
+        xRotationSlider.addEventListener('input', () => {
+            if (gridHelper) {
+                gridHelper.rotation.x = THREE.MathUtils.degToRad(xRotationSlider.value);
+            }
+            xRotationValueSpan.textContent = `${xRotationSlider.value}°`;
+        });
+        yRotationSlider.addEventListener('input', () => {
+            if (gridHelper) {
+                gridHelper.rotation.y = THREE.MathUtils.degToRad(yRotationSlider.value);
+            }
+            yRotationValueSpan.textContent = `${yRotationSlider.value}°`;
+        });
+        zRotationSlider.addEventListener('input', () => {
+            if (gridHelper) {
+                gridHelper.rotation.z = THREE.MathUtils.degToRad(zRotationSlider.value);
+            }
+            zRotationValueSpan.textContent = `${zRotationSlider.value}°`;
+        });
+
+        // New sliders and color picker for grid options
+        lineThicknessSlider.addEventListener('input', () => {
+            if (gridHelper) {
+                gridHelper.children.forEach(child => {
+                    if (child.material) {
+                        child.material.linewidth = parseFloat(lineThicknessSlider.value);
+                    }
+                });
+            }
+            lineThicknessValueSpan.textContent = lineThicknessSlider.value;
+        });
+
+        lineColorPicker.addEventListener('input', () => {
+            if (gridHelper) {
+                gridHelper.children.forEach(child => {
+                    if (child.material) {
+                        child.material.color.set(lineColorPicker.value);
+                    }
+                });
+            }
+        });
+
+        sectionsSlider.addEventListener('input', () => {
+            if (gridHelper) {
+                updateGrid();
+            }
+            sectionsValueSpan.textContent = sectionsSlider.value;
+        });
+
+        // Handle background changes
+        backgroundSelect.addEventListener('change', () => {
+            const value = backgroundSelect.value;
+            if (value === "image") {
+                document.body.style.backgroundImage = 'url("https://placehold.co/1920x1080/000000/FFFFFF?text=Background")';
+                document.body.style.backgroundSize = 'cover';
+                renderer.setClearColor(0x000000, 0);
+            } else {
+                document.body.style.backgroundImage = 'none';
+                document.body.style.backgroundColor = value;
+                renderer.setClearColor(new THREE.Color(value), 1);
+            }
+        });
+
+        // Handle download
+        downloadBtn.addEventListener('click', () => {
+            if (currentVoxelData) {
+                const dataStr = "data:text/json;charset=utf-8," + encodeURIComponent(JSON.stringify(currentVoxelData));
+                const downloadAnchorNode = document.createElement('a');
+                downloadAnchorNode.setAttribute("href", dataStr);
+                downloadAnchorNode.setAttribute("download", "voxel_model.json");
+                document.body.appendChild(downloadAnchorNode);
+                downloadAnchorNode.click();
+                downloadAnchorNode.remove();
+            }
+        });
+
+        // Handle collapse/expand
+        toggleButton.addEventListener('click', () => {
+            uiContent.classList.toggle('collapsed');
+            toggleButton.classList.toggle('collapsed');
+        });
+
+        // Render loop
+        function animate() {
+            requestAnimationFrame(animate);
+            controls.update();
+            renderer.render(scene, camera);
+        }
+
+        // Handle window resizing
+        window.addEventListener('resize', () => {
+            camera.aspect = window.innerWidth / window.innerHeight;
+            camera.updateProjectionMatrix();
+            renderer.setSize(window.innerWidth, window.innerHeight);
+        });
+        
+        init();
+        animate();
+    </script>
+</body>
+</html>
