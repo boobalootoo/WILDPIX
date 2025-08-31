@@ -1,0 +1,687 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Voxel Model Uploader</title>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/three@0.128/examples/js/controls/OrbitControls.js"></script>
+    <style>
+        body {
+            margin: 0;
+            overflow: hidden;
+            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+            color: #fff;
+            background-color: #121212;
+        }
+
+        #container {
+            position: absolute;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 100%;
+            z-index: 1;
+        }
+
+        #ui {
+            position: absolute;
+            top: 20px;
+            left: 20px;
+            z-index: 2;
+            padding: 12px;
+            background-color: rgba(255, 255, 255, 0.1);
+            border-radius: 12px;
+            backdrop-filter: blur(10px);
+            border: 1px solid rgba(255, 255, 255, 0.2);
+            box-shadow: 0 4px 30px rgba(0, 0, 0, 0.2);
+            display: flex;
+            flex-direction: column;
+            gap: 8px;
+            text-align: center;
+            transition: all 0.5s ease-in-out;
+            max-width: 220px;
+            width: 90%;
+        }
+
+        #ui-header {
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            position: relative;
+        }
+
+        h1 {
+            font-size: 1em;
+            margin: 0;
+            text-shadow: 2px 2px 4px rgba(0, 0, 0, 0.5);
+        }
+
+        #toggle-button {
+            position: absolute;
+            right: -10px;
+            top: 50%;
+            transform: translateY(-50%);
+            width: 22px;
+            height: 22px;
+            border-radius: 50%;
+            background: rgba(255, 255, 255, 0.2);
+            color: white;
+            border: none;
+            cursor: pointer;
+            font-size: 0.9em;
+            line-height: 1;
+            transition: transform 0.3s ease;
+            box-shadow: 0 2px 5px rgba(0, 0, 0, 0.3);
+        }
+
+        #toggle-button.collapsed {
+            transform: translateY(-50%) rotate(180deg);
+        }
+
+        #ui-content {
+            max-height: 500px;
+            overflow: hidden;
+            transition: max-height 0.5s ease-in-out, opacity 0.5s ease-in-out;
+            opacity: 1;
+            display: flex;
+            flex-direction: column;
+            gap: 8px;
+        }
+
+        #ui-content.collapsed {
+            max-height: 0;
+            opacity: 0;
+        }
+
+        p {
+            font-size: 0.7em;
+            margin: 0;
+            opacity: 0.8;
+        }
+
+        #fileInput, #imageInput {
+            display: none;
+        }
+
+        .custom-file-upload, .ui-btn {
+            border: 2px solid #fff;
+            padding: 5px 10px;
+            border-radius: 8px;
+            cursor: pointer;
+            transition: background-color 0.3s ease, transform 0.2s ease;
+            font-weight: bold;
+            text-shadow: 1px 1px 2px rgba(0, 0, 0, 0.3);
+            display: block;
+            font-size: 0.8em;
+            background: transparent;
+            color: white;
+            text-align: center;
+            -webkit-appearance: none;
+        }
+
+        .custom-file-upload:hover, .ui-btn:hover {
+            background-color: rgba(255, 255, 255, 0.2);
+            transform: scale(1.05);
+        }
+
+        .slider-container {
+            margin-top: 5px;
+        }
+
+        .slider-container label {
+            display: block;
+            font-size: 0.8em;
+            margin-bottom: 2px;
+        }
+
+        .slider-container input[type="range"] {
+            width: 100%;
+            -webkit-appearance: none;
+            height: 5px;
+            background: #d3d3d3;
+            outline: none;
+            opacity: 0.7;
+            transition: opacity .2s;
+            border-radius: 5px;
+        }
+        
+        .slider-container input[type="range"]::-webkit-slider-thumb {
+            -webkit-appearance: none;
+            appearance: none;
+            width: 15px;
+            height: 15px;
+            background: #fff;
+            cursor: pointer;
+            border-radius: 50%;
+        }
+
+        .slider-container input[type="range"]::-moz-range-thumb {
+            width: 15px;
+            height: 15px;
+            background: #fff;
+            cursor: pointer;
+            border-radius: 50%;
+        }
+
+        .slider-container span {
+            font-size: 0.7em;
+            margin-top: -5px;
+        }
+
+        #backgroundSelect {
+            padding: 5px;
+            border-radius: 6px;
+            border: 1px solid rgba(255, 255, 255, 0.4);
+            background-color: rgba(0, 0, 0, 0.3);
+            color: white;
+            font-size: 0.7em;
+            width: 100%;
+        }
+
+        #status {
+            margin-top: 5px;
+            font-style: italic;
+            opacity: 0.7;
+            min-height: 20px;
+            font-size: 0.7em;
+        }
+
+        .loading::before {
+            content: '';
+            display: inline-block;
+            width: 0.7em;
+            height: 0.7em;
+            border: 2px solid #fff;
+            border-right-color: transparent;
+            border-radius: 50%;
+            animation: spin 1s linear infinite;
+            vertical-align: middle;
+            margin-right: 5px;
+        }
+
+        @keyframes spin {
+            0% { transform: rotate(0deg); }
+            100% { transform: rotate(360deg); }
+        }
+    </style>
+</head>
+<body>
+    <div id="ui">
+        <div id="ui-header">
+            <h1>Voxel Model Uploader</h1>
+            <button id="toggle-button">▲</button>
+        </div>
+        <div id="ui-content">
+            <p>Upload a JSON file or an image to visualize your voxel model.</p>
+            <div>
+                <label for="fileInput" class="custom-file-upload">Upload JSON Model</label>
+                <input type="file" id="fileInput" accept=".json">
+            </div>
+            <div>
+                <label for="imageInput" class="custom-file-upload">Upload Image</label>
+                <input type="file" id="imageInput" accept=".png, .jpeg, .jpg">
+            </div>
+            <button id="addGridBtn" class="ui-btn" style="display: none;">Add Grid Cube</button>
+            <button id="convertBtn" class="ui-btn" style="display: none;">Convert to Voxel</button>
+            
+            <div class="slider-container">
+                <label for="xRotationSlider">X Rotation:</label>
+                <input type="range" id="xRotationSlider" min="-180" max="180" value="0">
+                <span id="xRotationValue">0°</span>
+            </div>
+
+            <div class="slider-container">
+                <label for="yRotationSlider">Y Rotation:</label>
+                <input type="range" id="yRotationSlider" min="-180" max="180" value="0">
+                <span id="yRotationValue">0°</span>
+            </div>
+
+            <div class="slider-container">
+                <label for="zRotationSlider">Z Rotation:</label>
+                <input type="range" id="zRotationSlider" min="-180" max="180" value="0">
+                <span id="zRotationValue">0°</span>
+            </div>
+            
+            <div class="slider-container">
+                <label for="resolutionSlider">Vertical Voxels:</label>
+                <input type="range" id="resolutionSlider" min="10" max="200" value="100">
+                <span id="resolutionValue">100</span>
+            </div>
+            
+            <div>
+                <label for="backgroundSelect">Background:</label>
+                <select id="backgroundSelect">
+                    <option value="#121212">Dark Grey</option>
+                    <option value="#FFFFFF">White</option>
+                    <option value="image">Image</option>
+                </select>
+            </div>
+            <button id="downloadBtn" class="ui-btn" style="display: none;">Download Model</button>
+            <div id="status"></div>
+        </div>
+    </div>
+    <div id="container"></div>
+
+    <script>
+        let scene, camera, renderer, controls;
+        let voxelGroup = new THREE.Group();
+        let gridHelper, imagePlane;
+        const statusDiv = document.getElementById('status');
+        const fileInput = document.getElementById('fileInput');
+        const imageInput = document.getElementById('imageInput');
+        const addGridBtn = document.getElementById('addGridBtn');
+        const convertBtn = document.getElementById('convertBtn');
+        const resolutionSlider = document.getElementById('resolutionSlider');
+        const resolutionValueSpan = document.getElementById('resolutionValue');
+        const backgroundSelect = document.getElementById('backgroundSelect');
+        const downloadBtn = document.getElementById('downloadBtn');
+        const toggleButton = document.getElementById('toggle-button');
+        const uiContent = document.getElementById('ui-content');
+
+        const xRotationSlider = document.getElementById('xRotationSlider');
+        const yRotationSlider = document.getElementById('yRotationSlider');
+        const zRotationSlider = document.getElementById('zRotationSlider');
+        const xRotationValueSpan = document.getElementById('xRotationValue');
+        const yRotationValueSpan = document.getElementById('yRotationValue');
+        const zRotationValueSpan = document.getElementById('zRotationValue');
+        
+        let currentVoxelData = null;
+        let currentImage = null;
+        
+        let raycaster = new THREE.Raycaster();
+        let mouse = new THREE.Vector2();
+        let isDragging = false;
+        let prevMouse = new THREE.Vector2();
+        let gridMouseIntersection;
+
+        function init() {
+            scene = new THREE.Scene();
+            camera = new THREE.PerspectiveCamera(45, window.innerWidth / window.innerHeight, 0.1, 1000);
+            camera.position.set(0, 0, 150);
+            camera.lookAt(0, 0, 0);
+
+            renderer = new THREE.WebGLRenderer({ antialias: true, alpha: true });
+            renderer.setSize(window.innerWidth, window.innerHeight);
+            renderer.setClearColor(0x000000, 0);
+            document.getElementById('container').appendChild(renderer.domElement);
+
+            const light = new THREE.DirectionalLight(0xffffff, 1);
+            light.position.set(5, 10, 5);
+            scene.add(light);
+            scene.add(new THREE.AmbientLight(0x404040));
+
+            controls = new THREE.OrbitControls(camera, renderer.domElement);
+            controls.enabled = false;
+            
+            // Add mouse event listeners for manipulation after the renderer is created
+            renderer.domElement.addEventListener('mousedown', onMouseDown, false);
+            renderer.domElement.addEventListener('mousemove', onMouseMove, false);
+            renderer.domElement.addEventListener('mouseup', onMouseUp, false);
+        }
+
+        function clearScene() {
+            scene.remove(voxelGroup);
+            if (voxelGroup.children) {
+                voxelGroup.children.forEach(child => {
+                    if (child.geometry) child.geometry.dispose();
+                    if (child.material) child.material.dispose();
+                });
+            }
+            if (gridHelper) {
+                scene.remove(gridHelper);
+                gridHelper.geometry.dispose();
+                gridHelper.material.dispose();
+                gridHelper = null;
+            }
+            if (imagePlane) {
+                scene.remove(imagePlane);
+                imagePlane.geometry.dispose();
+                imagePlane.material.dispose();
+                imagePlane = null;
+            }
+            voxelGroup = new THREE.Group();
+            currentVoxelData = null;
+            downloadBtn.style.display = 'none';
+            convertBtn.style.display = 'none';
+            addGridBtn.style.display = 'none';
+        }
+
+        function loadJSONModel(data) {
+            clearScene();
+            
+            if (!Array.isArray(data)) {
+                statusDiv.textContent = 'Error: JSON file must contain an array of objects.';
+                return;
+            }
+
+            const geometry = new THREE.BoxGeometry(1, 1, 1);
+            let min = new THREE.Vector3(Infinity, Infinity, Infinity);
+            let max = new THREE.Vector3(-Infinity, -Infinity, -Infinity);
+
+            data.forEach(block => {
+                if (block.x === undefined || block.y === undefined || block.z === undefined || block.color === undefined) {
+                    return;
+                }
+                const material = new THREE.MeshStandardMaterial({ color: new THREE.Color(block.color) });
+                const cube = new THREE.Mesh(geometry, material);
+                cube.position.set(block.x, block.y, block.z);
+                voxelGroup.add(cube);
+
+                min.x = Math.min(min.x, block.x);
+                min.y = Math.min(min.y, block.y);
+                min.z = Math.min(min.z, block.z);
+                max.x = Math.max(max.x, block.x);
+                max.y = Math.max(max.y, block.y);
+                max.z = Math.max(max.z, block.z);
+            });
+
+            const center = new THREE.Vector3().addVectors(min, max).multiplyScalar(0.5);
+            voxelGroup.position.sub(center);
+
+            scene.add(voxelGroup);
+            statusDiv.textContent = `JSON model loaded successfully with ${data.length} voxels.`;
+            downloadBtn.style.display = 'block';
+            controls.enabled = true;
+        }
+
+        function loadImagePlane(image) {
+            clearScene();
+            currentImage = image;
+            controls.enabled = false;
+
+            const aspectRatio = image.width / image.height;
+            const planeHeight = 100;
+            const planeWidth = planeHeight * aspectRatio;
+
+            const texture = new THREE.Texture(image);
+            texture.needsUpdate = true;
+            const material = new THREE.MeshBasicMaterial({ map: texture, transparent: true, side: THREE.DoubleSide });
+            const geometry = new THREE.PlaneGeometry(planeWidth, planeHeight);
+            imagePlane = new THREE.Mesh(geometry, material);
+            scene.add(imagePlane);
+            imagePlane.position.z = -1; // Place it slightly behind the z=0 plane
+            
+            addGridBtn.style.display = 'block';
+            statusDiv.textContent = 'Image loaded. Click "Add Grid Cube" to begin.';
+        }
+
+        function createGridCube() {
+            if (gridHelper) {
+                scene.remove(gridHelper);
+                gridHelper.geometry.dispose();
+                gridHelper.material.dispose();
+            }
+            
+            const planeWidth = imagePlane.geometry.parameters.width;
+            const planeHeight = imagePlane.geometry.parameters.height;
+            
+            const gridGeom = new THREE.BoxGeometry(planeWidth * 0.5, planeHeight * 0.5, planeWidth * 0.5); // Use same dimensions for a cube
+            const gridMat = new THREE.MeshBasicMaterial({ color: 0x00ff00, transparent: true, opacity: 0.2, wireframe: true });
+            gridHelper = new THREE.Mesh(gridGeom, gridMat);
+            
+            gridHelper.position.z = 0;
+            scene.add(gridHelper);
+            
+            convertBtn.style.display = 'block';
+            addGridBtn.style.display = 'none';
+            statusDiv.textContent = 'Grid added. Drag to move, use sliders to rotate.';
+        }
+
+        function convertImageToVoxel() {
+            if (!currentImage || !gridHelper) {
+                statusDiv.textContent = 'Please load an image and add a grid first.';
+                return;
+            }
+
+            statusDiv.textContent = 'Converting image to voxels...';
+            downloadBtn.style.display = 'none';
+
+            // Hide the image plane and wireframe for rendering the final model
+            if (imagePlane) scene.remove(imagePlane);
+            if (gridHelper) scene.remove(gridHelper);
+
+            const verticalResolution = parseInt(resolutionSlider.value, 10);
+            const gridBox = new THREE.Box3().setFromObject(gridHelper);
+            const gridWidth = gridBox.max.x - gridBox.min.x;
+            const gridHeight = gridBox.max.y - gridBox.min.y;
+            const horizontalResolution = Math.round(verticalResolution * gridWidth / gridHeight);
+
+            const canvas = document.createElement('canvas');
+            const ctx = canvas.getContext('2d');
+            canvas.width = horizontalResolution;
+            canvas.height = verticalResolution;
+
+            // Render the portion of the image that's under the grid
+            const imageX = (gridBox.min.x / imagePlane.geometry.parameters.width + 0.5) * currentImage.width;
+            const imageY = (0.5 - gridBox.max.y / imagePlane.geometry.parameters.height) * currentImage.height;
+            const imageW = (gridWidth / imagePlane.geometry.parameters.width) * currentImage.width;
+            const imageH = (gridHeight / imagePlane.geometry.parameters.height) * currentImage.height;
+            
+            ctx.drawImage(currentImage, imageX, imageY, imageW, imageH, 0, 0, horizontalResolution, verticalResolution);
+
+            const imageData = ctx.getImageData(0, 0, horizontalResolution, verticalResolution).data;
+            
+            clearScene();
+            voxelGroup = new THREE.Group();
+            currentVoxelData = [];
+            const cubeSize = Math.min(gridWidth / horizontalResolution, gridHeight / verticalResolution);
+
+            // Create a 3D cube of voxels
+            for (let z = 0; z < horizontalResolution; z++) {
+                for (let y = 0; y < verticalResolution; y++) {
+                    for (let x = 0; x < horizontalResolution; x++) {
+                        const i = (y * horizontalResolution + x) * 4;
+                        const r = imageData[i];
+                        const g = imageData[i + 1];
+                        const b = imageData[i + 2];
+                        const a = imageData[i + 3];
+
+                        if (a > 0) {
+                            const geometry = new THREE.BoxGeometry(cubeSize, cubeSize, cubeSize);
+                            const material = new THREE.MeshStandardMaterial({ color: new THREE.Color(`rgb(${r}, ${g}, ${b})`) });
+                            const cube = new THREE.Mesh(geometry, material);
+                            cube.position.set(
+                                (x - horizontalResolution / 2 + 0.5) * cubeSize,
+                                (verticalResolution / 2 - y - 0.5) * cubeSize,
+                                (z - horizontalResolution / 2 + 0.5) * cubeSize
+                            );
+                            voxelGroup.add(cube);
+                            currentVoxelData.push({ x: cube.position.x, y: cube.position.y, z: cube.position.z, color: `rgb(${r}, ${g}, ${b})` });
+                        }
+                    }
+                }
+            }
+            
+            scene.add(voxelGroup);
+            statusDiv.textContent = `Converted to ${horizontalResolution}x${verticalResolution}x${horizontalResolution} voxel model!`;
+            downloadBtn.style.display = 'block';
+            controls.enabled = true; // Enable camera orbit after conversion
+        }
+
+        // Mouse interaction for grid cube
+        function onMouseDown(event) {
+            if (!gridHelper) return;
+            event.preventDefault();
+
+            mouse.x = (event.clientX / window.innerWidth) * 2 - 1;
+            mouse.y = -(event.clientY / window.innerHeight) * 2 + 1;
+            prevMouse.copy(mouse);
+
+            raycaster.setFromCamera(mouse, camera);
+            const intersects = raycaster.intersectObjects([gridHelper]);
+            
+            if (intersects.length > 0) {
+                isDragging = true;
+                gridMouseIntersection = intersects[0].point;
+                renderer.domElement.style.cursor = 'grabbing';
+            }
+        }
+
+        function onMouseMove(event) {
+            if (!isDragging || !gridHelper) return;
+            event.preventDefault();
+
+            mouse.x = (event.clientX / window.innerWidth) * 2 - 1;
+            mouse.y = -(event.clientY / window.innerHeight) * 2 + 1;
+
+            const deltaMouse = new THREE.Vector2().subVectors(mouse, prevMouse);
+            prevMouse.copy(mouse);
+
+            // Calculate movement in 3D space
+            const plane = new THREE.Plane(new THREE.Vector3(0, 0, 1), 0);
+            const newRaycaster = new THREE.Raycaster();
+            newRaycaster.setFromCamera(mouse, camera);
+            let newIntersection = new THREE.Vector3();
+            newRaycaster.ray.intersectPlane(plane, newIntersection);
+
+            if (gridMouseIntersection) {
+                const deltaPos = new THREE.Vector3().subVectors(newIntersection, gridMouseIntersection);
+                gridHelper.position.add(deltaPos);
+                gridMouseIntersection.copy(newIntersection);
+            }
+        }
+
+        function onMouseUp(event) {
+            isDragging = false;
+            renderer.domElement.style.cursor = 'grab';
+        }
+
+        // Handle JSON file upload
+        fileInput.addEventListener('change', (event) => {
+            const file = event.target.files[0];
+            if (!file) return;
+
+            statusDiv.textContent = 'Loading JSON model...';
+            statusDiv.classList.add('loading');
+
+            const reader = new FileReader();
+            reader.onload = (e) => {
+                try {
+                    const json = JSON.parse(e.target.result);
+                    loadJSONModel(json);
+                } catch (error) {
+                    statusDiv.textContent = `Error parsing JSON: ${error.message}`;
+                    console.error('Error parsing JSON:', error);
+                } finally {
+                    statusDiv.classList.remove('loading');
+                }
+            };
+            reader.onerror = () => {
+                statusDiv.textContent = 'Error reading file.';
+                statusDiv.classList.remove('loading');
+            };
+            reader.readAsText(file);
+        });
+        
+        // Handle image file upload
+        imageInput.addEventListener('change', (event) => {
+            const file = event.target.files[0];
+            if (!file) return;
+
+            statusDiv.textContent = 'Loading image...';
+            statusDiv.classList.add('loading');
+            
+            const reader = new FileReader();
+            reader.onload = (e) => {
+                const img = new Image();
+                img.onload = () => {
+                    loadImagePlane(img);
+                    statusDiv.classList.remove('loading');
+                };
+                img.onerror = () => {
+                    statusDiv.textContent = 'Error loading image.';
+                    statusDiv.classList.remove('loading');
+                };
+                img.src = e.target.result;
+            };
+            reader.onerror = () => {
+                statusDiv.textContent = 'Error reading file.';
+                statusDiv.classList.remove('loading');
+            };
+            reader.readAsDataURL(file);
+        });
+
+        // Handle add grid button click
+        addGridBtn.addEventListener('click', createGridCube);
+
+        // Handle conversion
+        convertBtn.addEventListener('click', convertImageToVoxel);
+
+        // Update resolution value from slider
+        resolutionSlider.addEventListener('input', () => {
+            resolutionValueSpan.textContent = resolutionSlider.value;
+        });
+
+        // Update rotation values from sliders
+        xRotationSlider.addEventListener('input', () => {
+            if (gridHelper) {
+                gridHelper.rotation.x = THREE.MathUtils.degToRad(xRotationSlider.value);
+            }
+            xRotationValueSpan.textContent = `${xRotationSlider.value}°`;
+        });
+        yRotationSlider.addEventListener('input', () => {
+            if (gridHelper) {
+                gridHelper.rotation.y = THREE.MathUtils.degToRad(yRotationSlider.value);
+            }
+            yRotationValueSpan.textContent = `${yRotationSlider.value}°`;
+        });
+        zRotationSlider.addEventListener('input', () => {
+            if (gridHelper) {
+                gridHelper.rotation.z = THREE.MathUtils.degToRad(zRotationSlider.value);
+            }
+            zRotationValueSpan.textContent = `${zRotationSlider.value}°`;
+        });
+
+        // Handle background changes
+        backgroundSelect.addEventListener('change', () => {
+            const value = backgroundSelect.value;
+            if (value === "image") {
+                document.body.style.backgroundImage = 'url("https://placehold.co/1920x1080/000000/FFFFFF?text=Background")';
+                document.body.style.backgroundSize = 'cover';
+                renderer.setClearColor(0x000000, 0);
+            } else {
+                document.body.style.backgroundImage = 'none';
+                document.body.style.backgroundColor = value;
+                renderer.setClearColor(new THREE.Color(value), 1);
+            }
+        });
+
+        // Handle download
+        downloadBtn.addEventListener('click', () => {
+            if (currentVoxelData) {
+                const dataStr = "data:text/json;charset=utf-8," + encodeURIComponent(JSON.stringify(currentVoxelData));
+                const downloadAnchorNode = document.createElement('a');
+                downloadAnchorNode.setAttribute("href", dataStr);
+                downloadAnchorNode.setAttribute("download", "voxel_model.json");
+                document.body.appendChild(downloadAnchorNode);
+                downloadAnchorNode.click();
+                downloadAnchorNode.remove();
+            }
+        });
+
+        // Handle collapse/expand
+        toggleButton.addEventListener('click', () => {
+            uiContent.classList.toggle('collapsed');
+            toggleButton.classList.toggle('collapsed');
+        });
+
+        // Render loop
+        function animate() {
+            requestAnimationFrame(animate);
+            controls.update();
+            renderer.render(scene, camera);
+        }
+
+        // Handle window resizing
+        window.addEventListener('resize', () => {
+            camera.aspect = window.innerWidth / window.innerHeight;
+            camera.updateProjectionMatrix();
+            renderer.setSize(window.innerWidth, window.innerHeight);
+        });
+        
+        init();
+        animate();
+    </script>
+</body>
+</html>
