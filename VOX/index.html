@@ -1,0 +1,93 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>WebP Image Viewer</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
+    <style>
+        body {
+            font-family: 'Inter', sans-serif;
+        }
+        .image-container {
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            margin-bottom: 1rem;
+            box-shadow: 0 4px 6px -1px rgba(0, 0, 0, 0.1), 0 2px 4px -1px rgba(0, 0, 0, 0.06);
+            border-radius: 0.5rem; /* Rounded corners */
+            padding: 0.5rem;
+            background-color: white;
+        }
+        .image-container img {
+            max-width: 90%; /* Responsive width */
+            height: auto;
+            border-radius: 0.25rem; /* Rounded corners for images */
+        }
+        .image-container p {
+            margin-top: 0.5rem;
+            font-size: 0.875rem; /* Smaller font size */
+            color: #4a5568; /* Gray text */
+            text-align: center;
+        }
+    </style>
+</head>
+<body class="bg-gray-100 p-4">
+    <div class="container mx-auto">
+        <h1 class="text-2xl font-semibold text-gray-800 mb-6 text-center">WebP Image Viewer</h1>
+        <div id="image-list" class="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 lg:grid-cols-4 gap-4">
+            </div>
+    </div>
+
+    <script>
+        const imageList = document.getElementById('image-list');
+        const repoPath = 'https://boobalootoo.github.io/vox/'; // Update this to the correct path in your repository
+        const imageListFile = 'https://boobalootoo.github.io/vox/voxelfilenmaes.txt'; //  URL
+
+        fetch(imageListFile)
+            .then(response => {
+                if (!response.ok) {
+                    throw new Error(`Failed to fetch ${imageListFile}: ${response.status} ${response.statusText}`);
+                }
+                return response.text();
+            })
+            .then(data => {
+                // Check if the response is empty or just whitespace
+                if (!data || data.trim() === "") {
+                    imageList.innerHTML = `<p class="text-red-500 text-center">Error: The image list file is empty.</p>`;
+                    return; // Stop processing if the file is empty
+                }
+                const imageFiles = data.split('\n').filter(filename => filename.trim() !== ''); // Split by newline and remove empty lines
+
+                // Check if there are any image files to process
+                if (imageFiles.length === 0) {
+                    imageList.innerHTML = `<p class="text-yellow-500 text-center">Warning: No image files found in the list.</p>`;
+                    return; // Stop processing if there are no files
+                }
+
+                imageFiles.forEach(filename => {
+                    const imageContainer = document.createElement('div');
+                    imageContainer.className = 'image-container';
+
+                    const img = document.createElement('img');
+                    img.src = repoPath + filename;
+                    img.alt = filename;
+
+                    const filenameDisplay = document.createElement('p');
+                    filenameDisplay.textContent = filename;
+
+                    imageContainer.appendChild(img);
+                    imageContainer.appendChild(filenameDisplay);
+                    imageList.appendChild(imageContainer);
+                });
+            })
+            .catch(error => {
+                console.error('Error:', error);
+                imageList.innerHTML = `<p class="text-red-500 text-center">Error: Could not load image list.  Make sure ${imageListFile} exists and is accessible.  Details: ${error.message}</p>`;
+            });
+    </script>
+</body>
+</html>
