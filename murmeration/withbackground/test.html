@@ -1,0 +1,181 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <title>Murmuration Visualizer</title>
+  <style>
+    body {
+      margin: 0;
+      overflow: hidden;
+    }
+    canvas {
+      position: absolute;
+      top: 0;
+      left: 0;
+    }
+    #background {
+      z-index: 0;
+    }
+    #visualizer {
+      z-index: 1;
+      pointer-events: none; /* allows clicks to pass through */
+    }
+    #startButton {
+      position: absolute;
+      z-index: 2;
+      top: 20px;
+      left: 20px;
+      font-size: 18px;
+      padding: 10px;
+    }
+  </style>
+</head>
+<body>
+  <canvas id="background"></canvas>
+  <canvas id="visualizer"></canvas>
+  <button id="startButton">Start Visualizer</button>
+
+  <script>
+    const backgroundCanvas = document.getElementById('background');
+    const visualizerCanvas = document.getElementById('visualizer');
+    const backgroundCtx = backgroundCanvas.getContext('2d');
+    const ctx = visualizerCanvas.getContext('2d');
+    backgroundCanvas.width = visualizerCanvas.width = window.innerWidth;
+    backgroundCanvas.height = visualizerCanvas.height = window.innerHeight;
+
+    window.addEventListener('resize', () => {
+      backgroundCanvas.width = visualizerCanvas.width = window.innerWidth;
+      backgroundCanvas.height = visualizerCanvas.height = window.innerHeight;
+      drawBackground();
+    });
+
+    function drawBackground() {
+      // Example: Sky gradient
+      const gradient = backgroundCtx.createLinearGradient(0, 0, 0, backgroundCanvas.height);
+      gradient.addColorStop(0, "#87CEEB");
+      gradient.addColorStop(1, "#ffffff");
+      backgroundCtx.fillStyle = gradient;
+      backgroundCtx.fillRect(0, 0, backgroundCanvas.width, backgroundCanvas.height);
+    }
+
+    // Call immediately to draw background
+    drawBackground();
+
+    class Bird {
+      constructor() {
+        const centerX = visualizerCanvas.width / 2;
+        const centerY = visualizerCanvas.height / 2;
+        this.x = centerX + (Math.random() - 0.5) * 2000;
+        this.y = centerY + (Math.random() - 0.5) * 2000;
+        this.vx = Math.random() * 2 - 1;
+        this.vy = Math.random() * 2 - 1;
+        this.size = 2 + Math.random() * 2;
+        this.color = 'black';
+      }
+
+      update(avgAudio, flock, waveformData) {
+        let avoidX = 0, avoidY = 0, centerX = 0, centerY = 0;
+        let alignVX = 0, alignVY = 0, nearbyCount = 0, avoidCount = 0;
+        for (const other of flock) {
+          if (other === this) continue;
+          const dx = other.x - this.x;
+          const dy = other.y - this.y;
+          const dist = Math.hypot(dx, dy);
+          if (dist < 50) {
+            avoidX -= dx;
+            avoidY -= dy;
+            avoidCount++;
+          } else if (dist < 100) {
+            centerX += other.x;
+            centerY += other.y;
+            alignVX += other.vx;
+            alignVY += other.vy;
+            nearbyCount++;
+          }
+        }
+        if (avoidCount) {
+          this.vx += avoidX / avoidCount * 0.05;
+          this.vy += avoidY / avoidCount * 0.05;
+        }
+        if (nearbyCount) {
+          centerX /= nearbyCount;
+          centerY /= nearbyCount;
+          this.vx += (centerX - this.x) * 0.002;
+          this.vy += (centerY - this.y) * 0.002;
+          this.vx += (alignVX / nearbyCount - this.vx) * 0.01;
+          this.vy += (alignVY / nearbyCount - this.vy) * 0.01;
+        }
+
+        this.vx += (Math.random() - 0.5) * 0.2;
+        this.vy += (Math.random() - 0.5) * 0.2;
+
+        const speedLimit = Math.max(0.5, avgAudio / 50);
+        const speed = Math.hypot(this.vx, this.vy);
+        if (speed > speedLimit) {
+          this.vx = (this.vx / speed) * speedLimit;
+          this.vy = (this.vy / speed) * speedLimit;
+        }
+
+        const waveformIndex = Math.floor(this.x / visualizerCanvas.width * waveformData.length);
+        const waveformHeight = waveformData[waveformIndex] / 255 * visualizerCanvas.height;
+        this.y += (waveformHeight - this.y) * 0.05;
+
+        this.x += this.vx;
+
+        if (this.x < 0) this.x = visualizerCanvas.width;
+        if (this.x > visualizerCanvas.width) this.x = 0;
+        if (this.y < 0) this.y = visualizerCanvas.height;
+        if (this.y > visualizerCanvas.height) this.y = 0;
+      }
+
+      draw() {
+        ctx.beginPath();
+        ctx.arc(this.x, this.y, this.size, 0, Math.PI * 2);
+        ctx.fillStyle = this.color;
+        ctx.fill();
+      }
+    }
+
+    const flock = Array.from({ length: 300 }, () => new Bird());
+
+    async function initVisualizer() {
+      try {
+        const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+        const audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+        const source = audioCtx.createMediaStreamSource(stream);
+        const analyser = audioCtx.createAnalyser();
+
+        analyser.fftSize = 256;
+        const bufferLength = analyser.frequencyBinCount;
+        const dataArray = new Uint8Array(bufferLength);
+        source.connect(analyser);
+
+        function draw() {
+          requestAnimationFrame(draw);
+          analyser.getByteFrequencyData(dataArray);
+          const avg = dataArray.reduce((a, b) => a + b, 0) / bufferLength;
+
+          ctx.clearRect(0, 0, visualizerCanvas.width, visualizerCanvas.height);
+          const waveformData = new Uint8Array(bufferLength);
+          analyser.getByteFrequencyData(waveformData);
+
+          for (const bird of flock) {
+            bird.update(avg, flock, waveformData);
+            bird.draw();
+          }
+        }
+
+        draw();
+      } catch (err) {
+        alert('Microphone access denied or not supported.');
+        console.error(err);
+      }
+    }
+
+    document.getElementById('startButton').addEventListener('click', () => {
+      initVisualizer();
+      document.getElementById('startButton').style.display = 'none';
+    });
+  </script>
+</body>
+</html>
