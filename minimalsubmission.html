@@ -1,0 +1,40 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Submit Data</title>
+</head>
+<body>
+    <h1>Submit Record</h1>
+    <table border="1">
+        <tr>
+            <th>ID</th>
+            <th>Name</th>
+            <th>Date</th>
+            <th>Status</th>
+            <th>Action</th>
+        </tr>
+        <tr>
+            <td>1</td>
+            <td>Example Name</td>
+            <td>2025-03-06</td>
+            <td>Pending</td>
+            <td><button onclick="submitRow(1, 'Example Name', '2025-03-06', 'Pending')">Submit</button></td>
+        </tr>
+    </table>
+
+    <script>
+        function submitRow(id, name, date, status) {
+            fetch("https://script.google.com/macros/s/AKfycbwpBS-sVBFaGfrKlV_idUjhMuoRl85rEbU0nx-4nLip4sdAxGTkCY4sRaUZeBtcj1GBkA/exec", {
+                method: "POST",
+                mode: "no-cors",
+                headers: { "Content-Type": "application/json" },
+                body: JSON.stringify({ id, name, date, status })
+            })
+            .then(() => alert("Data submitted successfully!"))
+            .catch(error => console.error("Error:", error));
+        }
+    </script>
+</body>
+</html>
