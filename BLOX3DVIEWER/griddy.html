@@ -1,0 +1,402 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Image to Voxel Converter</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
+    <style>
+        body {
+            font-family: 'Inter', sans-serif;
+            @apply bg-gray-900 text-gray-100 p-8 flex flex-col items-center justify-center min-h-screen;
+        }
+        .container {
+            @apply flex flex-col md:flex-row gap-8 w-full max-w-7xl;
+        }
+        .panel {
+            @apply bg-gray-800 p-6 rounded-xl shadow-lg flex-1 flex flex-col;
+        }
+        canvas {
+            @apply rounded-xl;
+            cursor: crosshair;
+        }
+        input[type="number"] {
+            @apply bg-gray-700 text-gray-200 rounded-md p-2 mt-2;
+            width: 100%;
+        }
+        button {
+            @apply bg-blue-600 hover:bg-blue-700 text-white font-bold py-2 px-4 rounded-lg transition-colors;
+        }
+        .output-panel {
+            @apply flex-1 max-h-[400px] overflow-auto;
+            -ms-overflow-style: none;  /* IE and Edge */
+            scrollbar-width: none;  /* Firefox */
+        }
+        .output-panel::-webkit-scrollbar {
+            display: none;
+        }
+        pre {
+            @apply whitespace-pre-wrap break-words text-sm bg-gray-700 p-4 rounded-md;
+        }
+        .loading-overlay {
+            @apply absolute inset-0 bg-gray-900 bg-opacity-75 flex items-center justify-center rounded-xl;
+        }
+        #image-container {
+            position: relative;
+        }
+        #resetButton {
+            @apply bg-red-600 hover:bg-red-700;
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <!-- Control Panel -->
+        <div class="panel">
+            <h1 class="text-2xl font-bold mb-4">Voxelizer</h1>
+            <p class="text-sm text-gray-400 mb-4">
+                Upload an image, click four points to define a rectangle, and generate your 3D model.
+            </p>
+            <div class="mb-4">
+                <label class="block text-sm font-medium text-gray-400 mb-1">Upload Image</label>
+                <input type="file" id="imageInput" accept="image/*" class="w-full text-gray-300">
+            </div>
+
+            <!-- 2D Image Canvas -->
+            <div id="image-container" class="relative mb-4">
+                <canvas id="imageCanvas" class="border-2 border-gray-600 rounded-lg"></canvas>
+            </div>
+            
+            <div class="grid grid-cols-1 sm:grid-cols-3 gap-4 mb-4">
+                <div>
+                    <label class="block text-sm font-medium text-gray-400">X Sections</label>
+                    <input type="number" id="xSections" value="16" min="1" max="64">
+                </div>
+                <div>
+                    <label class="block text-sm font-medium text-gray-400">Y Sections</label>
+                    <input type="number" id="ySections" value="16" min="1" max="64">
+                </div>
+                <div>
+                    <label class="block text-sm font-medium text-gray-400">Z Sections</label>
+                    <input type="number" id="zSections" value="16" min="1" max="64">
+                </div>
+            </div>
+
+            <button id="generateButton">Generate Voxel Model</button>
+            <button id="resetButton" class="mt-2">Reset Selection</button>
+        </div>
+
+        <!-- 3D Voxel Preview and Output -->
+        <div class="panel relative flex-1">
+            <h2 class="text-2xl font-bold mb-4">3D Voxel Preview</h2>
+            <div id="loadingOverlay" class="loading-overlay hidden">
+                <svg class="animate-spin -ml-1 mr-3 h-8 w-8 text-blue-500" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24">
+                    <circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"></circle>
+                    <path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path>
+                </svg>
+                <span class="text-xl">Generating...</span>
+            </div>
+            <div id="threejs-container" class="flex-grow"></div>
+        </div>
+    </div>
+    
+    <div class="container mt-8">
+        <!-- Voxel Data Output -->
+        <div class="panel">
+            <h2 class="text-xl font-bold mb-4">Voxel Data Output</h2>
+            <div class="output-panel">
+                <pre id="outputData" class="text-gray-400">Voxel data will appear here after generation.</pre>
+            </div>
+        </div>
+    </div>
+
+    <script>
+        // --- UI Elements ---
+        const imageInput = document.getElementById('imageInput');
+        const imageCanvas = document.getElementById('imageCanvas');
+        const ctx = imageCanvas.getContext('2d');
+        const generateButton = document.getElementById('generateButton');
+        const threejsContainer = document.getElementById('threejs-container');
+        const outputData = document.getElementById('outputData');
+        const loadingOverlay = document.getElementById('loadingOverlay');
+        const xSectionsInput = document.getElementById('xSections');
+        const ySectionsInput = document.getElementById('ySections');
+        const zSectionsInput = document.getElementById('zSections');
+        const resetButton = document.getElementById('resetButton');
+
+        // --- Three.js Variables ---
+        let scene, camera, renderer;
+        let voxelsGroup = new THREE.Group();
+
+        // --- Drawing & Voxelization State ---
+        let originalImage = null;
+        let selectionPoints = [];
+        
+        // --- Initialization ---
+        function initThreeJS() {
+            // Scene
+            scene = new THREE.Scene();
+            scene.background = new THREE.Color(0x1a1a1a);
+
+            // Camera
+            camera = new THREE.PerspectiveCamera(75, threejsContainer.clientWidth / threejsContainer.clientHeight, 0.1, 1000);
+            camera.position.set(30, 30, 30);
+            camera.lookAt(0, 0, 0);
+
+            // Renderer
+            renderer = new THREE.WebGLRenderer({ antialias: true });
+            renderer.setSize(threejsContainer.clientWidth, threejsContainer.clientHeight);
+            renderer.setPixelRatio(window.devicePixelRatio);
+            threejsContainer.appendChild(renderer.domElement);
+
+            // Lights
+            const ambientLight = new THREE.AmbientLight(0x404040);
+            scene.add(ambientLight);
+            const directionalLight = new THREE.DirectionalLight(0xffffff, 0.8);
+            directionalLight.position.set(50, 50, 50);
+            scene.add(directionalLight);
+            
+            // Initial scene setup
+            scene.add(voxelsGroup);
+
+            // Resizing
+            window.addEventListener('resize', onWindowResize, false);
+            
+            animate();
+        }
+
+        function onWindowResize() {
+            camera.aspect = threejsContainer.clientWidth / threejsContainer.clientHeight;
+            camera.updateProjectionMatrix();
+            renderer.setSize(threejsContainer.clientWidth, threejsContainer.clientHeight);
+        }
+
+        // --- Voxel Generation Logic ---
+        function getAverageColor(imageData, x, y, width, height) {
+            let r = 0, g = 0, b = 0, count = 0;
+            const data = imageData.data;
+            const pixelWidth = imageData.width;
+            const pixelHeight = imageData.height;
+
+            for (let i = Math.max(0, x); i < Math.min(pixelWidth, x + width); i++) {
+                for (let j = Math.max(0, y); j < Math.min(pixelHeight, y + height); j++) {
+                    const index = (j * pixelWidth + i) * 4;
+                    if (data[index + 3] > 0) { // Check for alpha
+                        r += data[index];
+                        g += data[index + 1];
+                        b += data[index + 2];
+                        count++;
+                    }
+                }
+            }
+
+            if (count === 0) return { r: 0, g: 0, b: 0 };
+            return { r: r / count, g: g / count, b: b / count };
+        }
+
+        function rgbToHex(r, g, b) {
+            return "#" + ((1 << 24) + (r << 16) + (g << 8) + b).toString(16).slice(1).padStart(6, '0');
+        }
+
+        function generateVoxels() {
+            if (selectionPoints.length < 4 || !originalImage) {
+                outputData.textContent = "Please upload an image and click four points to define a rectangle.";
+                return;
+            }
+
+            loadingOverlay.classList.remove('hidden');
+
+            // Clear previous voxels
+            while (voxelsGroup.children.length > 0) {
+                const object = voxelsGroup.children[0];
+                object.geometry.dispose();
+                object.material.dispose();
+                voxelsGroup.remove(object);
+            }
+
+            const xSections = parseInt(xSectionsInput.value, 10);
+            const ySections = parseInt(ySectionsInput.value, 10);
+            const zSections = parseInt(zSectionsInput.value, 10);
+            
+            // Calculate the bounding box of the drawn rectangle
+            const minX = Math.min(...selectionPoints.map(p => p.x));
+            const minY = Math.min(...selectionPoints.map(p => p.y));
+            const maxX = Math.max(...selectionPoints.map(p => p.x));
+            const maxY = Math.max(...selectionPoints.map(p => p.y));
+
+            const selectionWidth = maxX - minX;
+            const selectionHeight = maxY - minY;
+
+            const xStep = selectionWidth / xSections;
+            const yStep = selectionHeight / ySections;
+
+            const voxelData = [];
+            const tempCanvas = document.createElement('canvas');
+            tempCanvas.width = originalImage.width;
+            tempCanvas.height = originalImage.height;
+            const tempCtx = tempCanvas.getContext('2d');
+            tempCtx.drawImage(originalImage, 0, 0);
+            const imageData = tempCtx.getImageData(0, 0, tempCanvas.width, tempCanvas.height);
+
+            // Voxelization process
+            for (let z = 0; z < zSections; z++) {
+                for (let y = 0; y < ySections; y++) {
+                    for (let x = 0; x < xSections; x++) {
+                        const pixelX = minX + Math.floor(x * xStep);
+                        const pixelY = minY + Math.floor(y * yStep);
+
+                        const color = getAverageColor(imageData, pixelX, pixelY, Math.ceil(xStep), Math.ceil(yStep));
+                        const hexColor = rgbToHex(Math.round(color.r), Math.round(color.g), Math.round(color.b));
+                        
+                        // Add a voxel only if the color is not too close to the background
+                        if (color.r > 20 || color.g > 20 || color.b > 20) {
+                             const geometry = new THREE.BoxGeometry(1, 1, 1);
+                             const material = new THREE.MeshLambertMaterial({ color: hexColor });
+                             const voxel = new THREE.Mesh(geometry, material);
+                             voxel.position.set(
+                                 (x - xSections / 2) * 1.1,
+                                 (y - ySections / 2) * 1.1,
+                                 (z - zSections / 2) * 1.1
+                             );
+                             voxelsGroup.add(voxel);
+                             voxelData.push({ x: x, y: y, z: z, color: hexColor });
+                        }
+                    }
+                }
+            }
+            
+            // Center the new model
+            const box = new THREE.Box3().setFromObject(voxelsGroup);
+            const center = box.getCenter(new THREE.Vector3());
+            voxelsGroup.position.sub(center);
+
+            // Display voxel data
+            outputData.textContent = JSON.stringify(voxelData, null, 2);
+            loadingOverlay.classList.add('hidden');
+        }
+
+        // --- Drawing Logic ---
+        function drawRectangle() {
+            ctx.clearRect(0, 0, imageCanvas.width, imageCanvas.height);
+            if (originalImage) {
+                ctx.drawImage(originalImage, 0, 0, imageCanvas.width, imageCanvas.height);
+            }
+
+            if (selectionPoints.length > 0) {
+                ctx.strokeStyle = '#3b82f6';
+                ctx.lineWidth = 2;
+                ctx.beginPath();
+                
+                // Move to the first point
+                const firstPoint = selectionPoints[0];
+                const drawX = (firstPoint.x / originalImage.width) * imageCanvas.width;
+                const drawY = (firstPoint.y / originalImage.height) * imageCanvas.height;
+                ctx.moveTo(drawX, drawY);
+
+                // Draw lines to subsequent points
+                for (let i = 1; i < selectionPoints.length; i++) {
+                    const point = selectionPoints[i];
+                    const drawX = (point.x / originalImage.width) * imageCanvas.width;
+                    const drawY = (point.y / originalImage.height) * imageCanvas.height;
+                    ctx.lineTo(drawX, drawY);
+                }
+
+                // If four points are selected, close the path to complete the rectangle
+                if (selectionPoints.length === 4) {
+                    const firstPoint = selectionPoints[0];
+                    const drawX = (firstPoint.x / originalImage.width) * imageCanvas.width;
+                    const drawY = (firstPoint.y / originalImage.height) * imageCanvas.height;
+                    ctx.lineTo(drawX, drawY);
+                }
+                
+                ctx.stroke();
+
+                // Draw a circle for each point
+                selectionPoints.forEach(point => {
+                    ctx.fillStyle = 'rgba(59, 130, 246, 0.5)';
+                    ctx.beginPath();
+                    const drawX = (point.x / originalImage.width) * imageCanvas.width;
+                    const drawY = (point.y / originalImage.height) * imageCanvas.height;
+                    ctx.arc(drawX, drawY, 5, 0, 2 * Math.PI);
+                    ctx.fill();
+                });
+            }
+        }
+
+        imageCanvas.addEventListener('click', (e) => {
+            if (!originalImage || selectionPoints.length >= 4) {
+                // Do not add more than 4 points
+                return;
+            }
+            const rect = imageCanvas.getBoundingClientRect();
+            // Calculate point relative to the original image dimensions
+            const newPoint = {
+                x: ((e.clientX - rect.left) / imageCanvas.width) * originalImage.width,
+                y: ((e.clientY - rect.top) / imageCanvas.height) * originalImage.height
+            };
+            selectionPoints.push(newPoint);
+            drawRectangle();
+        });
+
+        // --- Event Listeners ---
+        imageInput.addEventListener('change', (e) => {
+            const file = e.target.files[0];
+            if (!file) return;
+
+            const reader = new FileReader();
+            reader.onload = (event) => {
+                originalImage = new Image();
+                originalImage.onload = () => {
+                    // Set canvas dimensions once when the image loads
+                    const ratio = originalImage.width / originalImage.height;
+                    const containerWidth = imageCanvas.parentNode.clientWidth;
+                    const containerHeight = imageCanvas.parentNode.clientHeight;
+                    let canvasWidth, canvasHeight;
+
+                    if (containerWidth / containerHeight > ratio) {
+                        canvasHeight = containerHeight;
+                        canvasWidth = canvasHeight * ratio;
+                    } else {
+                        canvasWidth = containerWidth;
+                        canvasHeight = canvasWidth / ratio;
+                    }
+                    
+                    imageCanvas.width = canvasWidth;
+                    imageCanvas.height = canvasHeight;
+
+                    resetSelection();
+                    drawRectangle(); // Initial draw of the image
+                };
+                originalImage.src = event.target.result;
+            };
+            reader.readAsDataURL(file);
+        });
+
+        generateButton.addEventListener('click', generateVoxels);
+        resetButton.addEventListener('click', resetSelection);
+
+        function resetSelection() {
+            selectionPoints = [];
+            drawRectangle();
+            outputData.textContent = "Voxel data will appear here after generation.";
+            while (voxelsGroup.children.length > 0) {
+                const object = voxelsGroup.children[0];
+                object.geometry.dispose();
+                object.material.dispose();
+                voxelsGroup.remove(object);
+            }
+        }
+
+        // --- Animation Loop ---
+        function animate() {
+            requestAnimationFrame(animate);
+            voxelsGroup.rotation.y += 0.005;
+            renderer.render(scene, camera);
+        }
+
+        // Start everything
+        window.onload = initThreeJS;
+    </script>
+</body>
+</html>
