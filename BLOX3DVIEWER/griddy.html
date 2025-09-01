@@ -48,6 +48,9 @@
         #resetButton {
             @apply bg-red-600 hover:bg-red-700;
         }
+        .message-box {
+            @apply fixed top-4 left-1/2 -translate-x-1/2 bg-blue-600 text-white px-6 py-3 rounded-full shadow-lg transition-opacity duration-300;
+        }
     </style>
 </head>
 <body>
@@ -56,7 +59,7 @@
         <div class="panel">
             <h1 class="text-2xl font-bold mb-4">Voxelizer</h1>
             <p class="text-sm text-gray-400 mb-4">
-                Upload an image, click four points to define a rectangle, and generate your 3D model.
+                Upload an image, click four points to define a rectangle, and generate your 3D model. The selected area will be divided into a grid based on the X and Y sections.
             </p>
             <div class="mb-4">
                 <label class="block text-sm font-medium text-gray-400 mb-1">Upload Image</label>
@@ -110,6 +113,7 @@
             </div>
         </div>
     </div>
+    <div id="messageBox" class="message-box opacity-0"></div>
 
     <script>
         // --- UI Elements ---
@@ -124,6 +128,7 @@
         const ySectionsInput = document.getElementById('ySections');
         const zSectionsInput = document.getElementById('zSections');
         const resetButton = document.getElementById('resetButton');
+        const messageBox = document.getElementById('messageBox');
 
         // --- Three.js Variables ---
         let scene, camera, renderer;
@@ -201,7 +206,7 @@
 
         function generateVoxels() {
             if (selectionPoints.length < 4 || !originalImage) {
-                outputData.textContent = "Please upload an image and click four points to define a rectangle.";
+                showMessage("Please upload an image and click four points to define a rectangle.");
                 return;
             }
 
@@ -219,7 +224,7 @@
             const ySections = parseInt(ySectionsInput.value, 10);
             const zSections = parseInt(zSectionsInput.value, 10);
             
-            // Calculate the bounding box of the drawn rectangle
+            // Calculate the bounding box of the drawn rectangle for image sampling
             const minX = Math.min(...selectionPoints.map(p => p.x));
             const minY = Math.min(...selectionPoints.map(p => p.y));
             const maxX = Math.max(...selectionPoints.map(p => p.x));
@@ -284,30 +289,69 @@
             }
 
             if (selectionPoints.length > 0) {
+                // Draw lines between points
                 ctx.strokeStyle = '#3b82f6';
                 ctx.lineWidth = 2;
                 ctx.beginPath();
-                
-                // Move to the first point
-                const firstPoint = selectionPoints[0];
-                const drawX = (firstPoint.x / originalImage.width) * imageCanvas.width;
-                const drawY = (firstPoint.y / originalImage.height) * imageCanvas.height;
-                ctx.moveTo(drawX, drawY);
+                ctx.moveTo((selectionPoints[0].x / originalImage.width) * imageCanvas.width, (selectionPoints[0].y / originalImage.height) * imageCanvas.height);
 
-                // Draw lines to subsequent points
                 for (let i = 1; i < selectionPoints.length; i++) {
-                    const point = selectionPoints[i];
-                    const drawX = (point.x / originalImage.width) * imageCanvas.width;
-                    const drawY = (point.y / originalImage.height) * imageCanvas.height;
-                    ctx.lineTo(drawX, drawY);
+                    ctx.lineTo((selectionPoints[i].x / originalImage.width) * imageCanvas.width, (selectionPoints[i].y / originalImage.height) * imageCanvas.height);
                 }
-
-                // If four points are selected, close the path to complete the rectangle
+                
                 if (selectionPoints.length === 4) {
-                    const firstPoint = selectionPoints[0];
-                    const drawX = (firstPoint.x / originalImage.width) * imageCanvas.width;
-                    const drawY = (firstPoint.y / originalImage.height) * imageCanvas.height;
-                    ctx.lineTo(drawX, drawY);
+                    ctx.closePath();
+                    
+                    // Linear interpolation helper
+                    const lerp = (pA, pB, t) => {
+                        return {
+                            x: pA.x + (pB.x - pA.x) * t,
+                            y: pA.y + (pB.y - pA.y) * t,
+                        };
+                    };
+                    
+                    // Sort points to have a consistent order for drawing grid lines
+                    const sortedPoints = [...selectionPoints].sort((a, b) => {
+                        if (a.y !== b.y) return a.y - b.y;
+                        return a.x - b.x;
+                    });
+                    
+                    const topPoints = sortedPoints.slice(0, 2).sort((a, b) => a.x - b.x);
+                    const bottomPoints = sortedPoints.slice(2, 4).sort((a, b) => a.x - b.x);
+
+                    const topLeft = topPoints[0];
+                    const topRight = topPoints[1];
+                    const bottomLeft = bottomPoints[0];
+                    const bottomRight = bottomPoints[1];
+
+                    ctx.strokeStyle = 'rgba(59, 130, 246, 0.4)';
+                    ctx.lineWidth = 1;
+
+                    // Draw vertical grid lines
+                    const xSections = parseInt(xSectionsInput.value, 10);
+                    for (let i = 1; i < xSections; i++) {
+                        const t = i / xSections;
+                        const topPoint = lerp(topLeft, topRight, t);
+                        const bottomPoint = lerp(bottomLeft, bottomRight, t);
+
+                        ctx.beginPath();
+                        ctx.moveTo((topPoint.x / originalImage.width) * imageCanvas.width, (topPoint.y / originalImage.height) * imageCanvas.height);
+                        ctx.lineTo((bottomPoint.x / originalImage.width) * imageCanvas.width, (bottomPoint.y / originalImage.height) * imageCanvas.height);
+                        ctx.stroke();
+                    }
+
+                    // Draw horizontal grid lines
+                    const ySections = parseInt(ySectionsInput.value, 10);
+                    for (let i = 1; i < ySections; i++) {
+                        const t = i / ySections;
+                        const leftPoint = lerp(topLeft, bottomLeft, t);
+                        const rightPoint = lerp(topRight, bottomRight, t);
+
+                        ctx.beginPath();
+                        ctx.moveTo((leftPoint.x / originalImage.width) * imageCanvas.width, (leftPoint.y / originalImage.height) * imageCanvas.height);
+                        ctx.lineTo((rightPoint.x / originalImage.width) * imageCanvas.width, (rightPoint.y / originalImage.height) * imageCanvas.height);
+                        ctx.stroke();
+                    }
                 }
                 
                 ctx.stroke();
@@ -316,9 +360,7 @@
                 selectionPoints.forEach(point => {
                     ctx.fillStyle = 'rgba(59, 130, 246, 0.5)';
                     ctx.beginPath();
-                    const drawX = (point.x / originalImage.width) * imageCanvas.width;
-                    const drawY = (point.y / originalImage.height) * imageCanvas.height;
-                    ctx.arc(drawX, drawY, 5, 0, 2 * Math.PI);
+                    ctx.arc((point.x / originalImage.width) * imageCanvas.width, (point.y / originalImage.height) * imageCanvas.height, 5, 0, 2 * Math.PI);
                     ctx.fill();
                 });
             }
@@ -337,6 +379,9 @@
             };
             selectionPoints.push(newPoint);
             drawRectangle();
+            if (selectionPoints.length === 4) {
+                showMessage("Selection complete! Adjust sections or click 'Generate Voxel Model'.");
+            }
         });
 
         // --- Event Listeners ---
@@ -375,6 +420,11 @@
 
         generateButton.addEventListener('click', generateVoxels);
         resetButton.addEventListener('click', resetSelection);
+        
+        // Add event listeners for the input fields
+        xSectionsInput.addEventListener('input', drawRectangle);
+        ySectionsInput.addEventListener('input', drawRectangle);
+
 
         function resetSelection() {
             selectionPoints = [];
@@ -386,6 +436,17 @@
                 object.material.dispose();
                 voxelsGroup.remove(object);
             }
+            showMessage("Selection reset. Please click four new points.");
+        }
+
+        function showMessage(text) {
+            messageBox.textContent = text;
+            messageBox.classList.remove('opacity-0');
+            messageBox.classList.add('opacity-100');
+            setTimeout(() => {
+                messageBox.classList.remove('opacity-100');
+                messageBox.classList.add('opacity-0');
+            }, 3000);
         }
 
         // --- Animation Loop ---
