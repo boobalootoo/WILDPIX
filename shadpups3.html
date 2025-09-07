@@ -1,0 +1,218 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Shadow Puppets (Filled Hand)</title>
+    <!-- Use Tailwind CSS for a clean, modern design -->
+    <script src="https://cdn.tailwindcss.com"></script>
+    <style>
+        /* Set the entire page to a clean white background */
+        body {
+            background-color: #fff;
+            color: #1a202c;
+            font-family: 'Inter', sans-serif;
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            min-height: 100vh;
+            margin: 0;
+            padding: 1rem;
+        }
+
+        /* Ensure the canvas is the only visible element from the video stream */
+        .container {
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            justify-content: center;
+            width: 100%;
+            max-width: 960px;
+        }
+
+        /* Hide the original video element from view */
+        #videoElement {
+            display: none;
+        }
+
+        /* Loading animation style */
+        .loader {
+            border: 8px solid #f3f3f3;
+            border-top: 8px solid #3498db;
+            border-radius: 50%;
+            width: 60px;
+            height: 60px;
+            animation: spin 2s linear infinite;
+        }
+
+        @keyframes spin {
+            0% { transform: rotate(0deg); }
+            100% { transform: rotate(360deg); }
+        }
+    </style>
+</head>
+<body>
+
+    <!-- Main container for the app -->
+    <div class="container">
+        <!-- Canvas where the shadow puppet effect will be drawn -->
+        <canvas id="shadowCanvas" class="w-full h-auto max-w-full rounded-lg shadow-2xl border-4 border-gray-100"></canvas>
+        
+        <!-- Button to start the camera -->
+        <button id="startButton" class="mt-8 px-8 py-4 bg-gray-800 hover:bg-gray-700 text-white font-bold text-lg rounded-full shadow-lg transition-all duration-300 transform hover:scale-105">
+            Start Camera
+        </button>
+
+        <!-- Message box for user feedback and errors -->
+        <div id="messageBox" class="mt-4 p-4 text-center text-sm text-gray-600">
+            Click 'Start Camera' to begin.
+        </div>
+        
+        <!-- Loading spinner for when the model is being loaded -->
+        <div id="loader" class="loader mt-4 hidden"></div>
+    </div>
+    
+    <!-- Hidden video element to capture the camera stream -->
+    <video id="videoElement" autoplay playsinline></video>
+
+    <!-- Load the MediaPipe Hands model from CDN -->
+    <script src="https://cdn.jsdelivr.net/npm/@tensorflow/tfjs"></script>
+    <script src="https://cdn.jsdelivr.net/npm/@mediapipe/hands"></script>
+    <script src="https://cdn.jsdelivr.net/npm/@tensorflow-models/hand-pose-detection"></script>
+
+    <script>
+        // Get references to the HTML elements
+        const videoElement = document.getElementById('videoElement');
+        const canvas = document.getElementById('shadowCanvas');
+        const startButton = document.getElementById('startButton');
+        const messageBox = document.getElementById('messageBox');
+        const loader = document.getElementById('loader');
+        const ctx = canvas.getContext('2d');
+        
+        // MediaPipe Hands model and its loading status
+        let model;
+
+        /**
+         * The main animation loop. It detects hands and draws them as black silhouettes.
+         */
+        async function detectHands() {
+            // Check if the video is ready and the model is loaded
+            if (videoElement.readyState === videoElement.HAVE_ENOUGH_DATA && model) {
+                // Ensure canvas dimensions match video dimensions for correct rendering
+                canvas.width = videoElement.videoWidth;
+                canvas.height = videoElement.videoHeight;
+                
+                // Clear the canvas to a pure white background
+                ctx.fillStyle = '#fff';
+                ctx.fillRect(0, 0, canvas.width, canvas.height);
+
+                // Apply a horizontal flip transformation to fix mirroring
+                ctx.save();
+                ctx.scale(-1, 1);
+                ctx.translate(-canvas.width, 0);
+
+                // Pass the video frame to the hand detection model
+                const hands = await model.estimateHands(videoElement);
+
+                // If hands are detected, draw them as a solid black shape
+                if (hands.length > 0) {
+                    for (const hand of hands) {
+                        drawHand(hand.keypoints);
+                    }
+                }
+                // Restore the canvas to its original state for the next frame
+                ctx.restore();
+            }
+            
+            // Continue the animation loop
+            requestAnimationFrame(detectHands);
+        }
+
+        /**
+         * Draws a solid, filled-in hand shape by tracing the outer keypoints of the hand.
+         * @param {Array} keypoints The 21 keypoints detected by the hand model.
+         */
+        function drawHand(keypoints) {
+            ctx.strokeStyle = '#000';
+            ctx.lineCap = 'round';
+            ctx.lineJoin = 'round';
+            ctx.lineWidth = 30; // A significant line width to create the filled effect
+
+            // Define the connections for the hand skeleton
+            const connections = [
+                // Thumb
+                [0, 1], [1, 2], [2, 3], [3, 4],
+                // Index finger
+                [0, 5], [5, 6], [6, 7], [7, 8],
+                // Middle finger
+                [9, 10], [10, 11], [11, 12],
+                // Ring finger
+                [13, 14], [14, 15], [15, 16],
+                // Pinky finger
+                [0, 17], [17, 18], [18, 19], [19, 20],
+                // Palm connections
+                [5, 9], [9, 13], [13, 17]
+            ];
+            
+            // Loop through each connection and draw a line
+            for (const connection of connections) {
+                ctx.beginPath();
+                ctx.moveTo(keypoints[connection[0]].x, keypoints[connection[0]].y);
+                ctx.lineTo(keypoints[connection[1]].x, keypoints[connection[1]].y);
+                ctx.stroke();
+            }
+        }
+
+
+        /**
+         * Starts the camera, loads the model, and begins the main loop.
+         */
+        async function startApp() {
+            messageBox.textContent = 'Loading hand tracking model...';
+            startButton.disabled = true;
+            loader.classList.remove('hidden');
+
+            try {
+                // Configure the MediaPipe Hands model
+                const detectorConfig = {
+                    runtime: 'mediapipe', // Use MediaPipe runtime for performance
+                    solutionPath: 'https://cdn.jsdelivr.net/npm/@mediapipe/hands',
+                    modelType: 'full'
+                };
+                
+                // Attempt to create the hand detector
+                model = await handPoseDetection.createDetector(handPoseDetection.SupportedModels.MediaPipeHands, detectorConfig);
+                
+                messageBox.textContent = 'Model loaded. Requesting camera access...';
+
+                // Request access to the user's video camera
+                const stream = await navigator.mediaDevices.getUserMedia({ video: true });
+                videoElement.srcObject = stream;
+                
+                // When the video starts playing, begin the processing loop
+                videoElement.addEventListener('loadeddata', () => {
+                    videoElement.play();
+                    // Set up the canvas dimensions to match the video
+                    canvas.width = videoElement.videoWidth;
+                    canvas.height = videoElement.videoHeight;
+                    detectHands();
+                    messageBox.textContent = 'Camera started. Wave your hands in front of the camera!';
+                    startButton.style.display = 'none'; // Hide the button once camera is on
+                    loader.classList.add('hidden');
+                }, { once: true });
+            } catch (err) {
+                // Handle cases where the user denies permission or no camera is found
+                console.error('An error occurred: ' + err);
+                messageBox.textContent = `Error: Could not start the app. Please check if another application is using the camera and ensure you have granted camera permissions to this page.`;
+                startButton.style.display = 'block'; // Keep the button visible
+                startButton.disabled = false;
+                loader.classList.add('hidden');
+            }
+        }
+        
+        // Add a click event listener to the start button
+        startButton.addEventListener('click', startApp);
+    </script>
+
+</body>
+</html>
