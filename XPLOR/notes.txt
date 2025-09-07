@@ -1,0 +1,7 @@
+A site where you take a picture of a species which also takes your coordinates. Then you select which species it is using a searchable drop down menu. You then get this 3d model shown over the image or your live camera feed. You rotate the model or make it larger or smaller for different distances. The size you choose the model to be and the size of the species is used to calculate how far away it is from you and this is used with your coordinates and elevation to find the xyz coordinates of the species. After this has been determined you should be able to submit the photo along with the xyz coordinates of the species, your coordinates, the datetime and the species name.
+
+There should be a separate site where this data is read from a csv and you can see the models in their correct positions using your phone camera (like AR). This can be done using the devices co-ordinates and orientation information.
+
+
+A compass should also be used for this site
+I might also want a mode where you see gridlines through your camera feed, each box in the grid could contain it's UKGR or coordinates, you could be able to choose what accuracy you want to see. 
