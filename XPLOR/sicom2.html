@@ -1,0 +1,445 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width,initial-scale=1" />
+  <title>Species Compass</title>
+  <script src="https://cdn.tailwindcss.com"></script>
+  <script src="https://cdn.jsdelivr.net/npm/papaparse@5.4.1/papaparse.min.js"></script>
+  <style>
+    body { font-family: Inter, system-ui, -apple-system, "Segoe UI", Roboto, "Helvetica Neue", Arial; }
+    /* This class controls the needle's rotation, with a smooth transition. */
+    .compass-needle { transform-origin: 50% 80%; transition: transform 120ms linear; }
+    /* This class applies a smooth transition to the arrows for a better visual effect. */
+    .arrow { transition: transform 400ms ease; pointer-events: none; }
+    /* Styling for the text labels on the compass */
+    .arrow-label {
+      background-color: rgba(31, 41, 55, 0.7); /* Semi-transparent background */
+      padding: 2px 6px;
+      border-radius: 999px;
+      font-size: 11px;
+      white-space: nowrap;
+      position: absolute;
+      transform: translateX(-50%);
+      pointer-events: auto;
+      text-align: center;
+    }
+  </style>
+</head>
+<body class="bg-gray-900 text-gray-100 min-h-screen flex items-center justify-center p-4">
+  <div class="max-w-md w-full bg-gray-800 rounded-2xl p-6 space-y-4 shadow-lg">
+    <h1 class="text-xl font-bold text-center">Species Compass</h1>
+
+    <!-- Status messages are displayed here to inform the user. -->
+    <div id="status" class="text-sm text-orange-300 text-center">Initializing…</div>
+
+    <!-- Main camera and compass display area -->
+    <div class="relative w-full aspect-video rounded-xl overflow-hidden bg-black">
+      <!-- Camera video feed -->
+      <video id="camera" class="w-full h-full object-cover" autoplay playsinline></video>
+
+      <!-- Compass overlay on top of the video feed -->
+      <div class="absolute inset-0 flex justify-center items-center pointer-events-none">
+        <div class="w-40 h-40 rounded-full border-4 border-gray-600 relative flex items-center justify-center bg-black/20">
+          <div id="compass-needle" class="compass-needle w-1.5 h-20 bg-red-400 absolute top-3 rounded-b-full"></div>
+          
+          <!-- Cardinal letters for the compass -->
+          <div class="absolute top-2 left-1/2 -translate-x-1/2 text-red-400 font-bold">N</div>
+          <div class="absolute right-2 top-1/2 -translate-y-1/2 text-gray-300">E</div>
+          <div class="absolute bottom-2 left-1/2 -translate-x-1/2 text-gray-300">S</div>
+          <div class="absolute left-2 top-1/2 -translate-y-1/2 text-gray-300">W</div>
+
+          <!-- Arrows indicating nearby species (dynamically inserted by JavaScript) -->
+          <div id="compass-arrows" class="absolute inset-0"></div>
+        </div>
+      </div>
+
+      <!-- Close-range AR markers for very close species -->
+      <div id="ar-markers" class="absolute inset-0 z-30 pointer-events-none"></div>
+    </div>
+
+    <!-- Search input for filtering species -->
+    <div>
+      <input id="search" type="text" placeholder="Search species..." 
+             class="w-full p-3 rounded-lg bg-gray-700 placeholder-gray-300 focus:outline-none" />
+    </div>
+
+    <!-- Dropdown list of species, initially showing all -->
+    <div id="list" class="bg-gray-700 rounded-lg max-h-60 overflow-y-auto p-2">
+      <p id="list-status" class="text-center text-gray-300 p-4">Loading species...</p>
+    </div>
+
+    <!-- Displays current coordinates and heading -->
+    <div class="flex justify-between text-xs text-gray-400">
+      <div id="coords">Lat: — , Lon: —</div>
+      <div id="heading">Heading: —°</div>
+    </div>
+  </div>
+
+  <script>
+    const CSV_URL = 'https://raw.githubusercontent.com/boobalootoo/WILDPIX/main/cardinfo.csv';
+
+    // Get all necessary HTML elements to manipulate them
+    const camera = document.getElementById('camera');
+    const statusEl = document.getElementById('status');
+    const listEl = document.getElementById('list');
+    const listStatus = document.getElementById('list-status');
+    const searchInput = document.getElementById('search');
+    const coordsEl = document.getElementById('coords');
+    const headingEl = document.getElementById('heading');
+
+    const compassNeedle = document.getElementById('compass-needle');
+    const compassArrows = document.getElementById('compass-arrows');
+    const arMarkers = document.getElementById('ar-markers');
+
+    // State variables to hold data and user information
+    let speciesData = []; // { speciesName, lat, lon }
+    let userCoords = { lat: null, lon: null };
+    let userHeading = 0;
+    let currentSearchTerm = '';
+
+    // --------------------------------------------------------------------------
+    // ---------- Math Helpers for Haversine Distance and Bearing -------------
+    // --------------------------------------------------------------------------
+
+    // Converts degrees to radians.
+    function toRad(deg) { return deg * Math.PI / 180; }
+    // Converts radians to degrees.
+    function toDeg(rad) { return rad * 180 / Math.PI; }
+
+    // Calculates the distance between two geographical coordinates using the Haversine formula.
+    // Returns the distance in meters.
+    function haversineDistance(a, b) {
+      const R = 6371e3; // Earth's radius in meters
+      const φ1 = toRad(a.lat), φ2 = toRad(b.lat);
+      const Δφ = toRad(b.lat - a.lat), Δλ = toRad(b.lon - a.lon);
+      const sa = Math.sin(Δφ/2)**2 + Math.cos(φ1)*Math.cos(φ2)*Math.sin(Δλ/2)**2;
+      const c = 2 * Math.atan2(Math.sqrt(sa), Math.sqrt(1-sa));
+      return R * c;
+    }
+
+    // Calculates the bearing (direction) from one coordinate to another.
+    // Returns the bearing in degrees from true north (0-360).
+    function calculateBearing(from, to) {
+      const φ1 = toRad(from.lat), φ2 = toRad(to.lat);
+      const Δλ = toRad(to.lon - from.lon);
+      const y = Math.sin(Δλ) * Math.cos(φ2);
+      const x = Math.cos(φ1)*Math.sin(φ2) - Math.sin(φ1)*Math.cos(φ2)*Math.cos(Δλ);
+      let θ = Math.atan2(y, x);
+      θ = (toDeg(θ) + 360) % 360; // Normalize to 0-360 degrees
+      return θ;
+    }
+
+    // --------------------------------------------------------------------------
+    // ---------- CSV Loading and Parsing Logic -------------
+    // --------------------------------------------------------------------------
+
+    // Fetches and parses the CSV data from the provided URL.
+    async function loadCSV() {
+      listStatus.textContent = 'Loading species data...';
+      try {
+        const response = await fetch(CSV_URL);
+        if (!response.ok) throw new Error('CSV fetch failed with status: ' + response.status);
+        const text = await response.text();
+        const parsed = Papa.parse(text, { header: false, skipEmptyLines: true });
+
+        // Map and filter the parsed data to create a clean array of species objects.
+        speciesData = parsed.data
+          .map((row) => {
+            // Check if row has enough columns and valid data
+            if (!row || row.length < 4 || !row[0] || !row[3]) return null;
+            
+            const name = String(row[0]).trim();
+            const coord = String(row[3]).trim();
+            
+            let lat, lon;
+            // Handle different coordinate formats
+            if (coord.includes(',')) {
+              [lat, lon] = coord.split(',').map(s => Number(s.trim()));
+            } else if (coord.includes(';')) {
+              [lat, lon] = coord.split(';').map(s => Number(s.trim()));
+            } else {
+              const parts = coord.split(/\s+/).map(s => s.trim()).filter(Boolean);
+              [lat, lon] = parts.map(Number);
+            }
+
+            // Only return an object if coordinates are valid numbers
+            if (isFinite(lat) && isFinite(lon)) {
+              return { speciesName: name, lat: lat, lon: lon };
+            }
+            return null;
+          })
+          .filter(Boolean); // Filter out any null entries
+
+        if (speciesData.length === 0) {
+          listStatus.textContent = 'No valid species-with-coordinates found in CSV.';
+        } else {
+          listStatus.textContent = '';
+          renderList(speciesData);
+        }
+      } catch (err) {
+        console.error(err);
+        listStatus.textContent = 'Failed to load CSV.';
+      }
+    }
+
+    // --------------------------------------------------------------------------
+    // ---------- UI Rendering and Search Logic -------------
+    // --------------------------------------------------------------------------
+
+    // Renders the species list in the UI based on the provided entries.
+    function renderList(entries) {
+      listEl.innerHTML = '';
+      if (!entries || entries.length === 0) {
+        listEl.innerHTML = `<p class="p-4 text-center text-gray-300">No species found.</p>`;
+        return;
+      }
+      
+      // Group sightings by species name to show unique names in the list.
+      const grouped = {};
+      entries.forEach(e => {
+        (grouped[e.speciesName] ??= []).push(e);
+      });
+
+      Object.keys(grouped).sort((a,b)=>a.localeCompare(b)).forEach(name => {
+        const wrapper = document.createElement('div');
+        wrapper.className = 'p-2 rounded hover:bg-gray-600 cursor-pointer';
+        wrapper.textContent = name + ` (${grouped[name].length} sighting${grouped[name].length>1?'s':''})`;
+        wrapper.onclick = () => {
+          // When a species is clicked, set the search term and hide the list.
+          currentSearchTerm = name;
+          searchInput.value = name;
+          listEl.innerHTML = '';
+        };
+        listEl.appendChild(wrapper);
+      });
+    }
+
+    // Handles the search input event to filter the species list.
+    searchInput.addEventListener('input', (e) => {
+      const query = e.target.value.trim().toLowerCase();
+      currentSearchTerm = query === '' ? '' : query;
+      
+      if (!query) {
+        renderList(speciesData);
+        return;
+      }
+      
+      const filtered = speciesData.filter(s => s.speciesName.toLowerCase().includes(query));
+      const names = [...new Map(filtered.map(s => [s.speciesName, s])).values()];
+      
+      if (names.length === 0) {
+        listEl.innerHTML = `<p class="p-4 text-center text-gray-300">No species match “${query}”.</p>`;
+      } else {
+        listEl.innerHTML = '';
+        names.forEach(s => {
+          const item = document.createElement('div');
+          item.className = 'p-2 rounded hover:bg-gray-600 cursor-pointer';
+          item.textContent = s.speciesName;
+          item.onclick = () => {
+            currentSearchTerm = s.speciesName;
+            searchInput.value = s.speciesName;
+            listEl.innerHTML = '';
+          };
+          listEl.appendChild(item);
+        });
+      }
+    });
+
+    // Handles clicks outside of the search box and list to hide the dropdown.
+    document.addEventListener('click', (e) => {
+      if (!listEl.contains(e.target) && !searchInput.contains(e.target)) {
+        if (currentSearchTerm) listEl.innerHTML = '';
+      } else {
+        if (listEl.children.length === 0) renderList(speciesData);
+      }
+    });
+
+    // --------------------------------------------------------------------------
+    // ---------- Compass and AR Marker Rendering Logic -------------
+    // --------------------------------------------------------------------------
+
+    // Updates the compass needle and AR markers based on user's heading and location.
+    function updateCompassDisplay() {
+      headingEl.textContent = `Heading: ${userHeading === null ? '—' : userHeading.toFixed(0) + '°'}`;
+      compassNeedle.style.transform = `rotate(${userHeading}deg)`;
+
+      if (userCoords.lat === null || userCoords.lon === null) return;
+
+      let candidates = speciesData;
+      if (currentSearchTerm && currentSearchTerm !== '') {
+        const searchLower = currentSearchTerm.toLowerCase();
+        candidates = speciesData.filter(s => s.speciesName.toLowerCase() === searchLower || s.speciesName.toLowerCase().includes(searchLower));
+      }
+
+      // Compute distance and bearing for all candidate species.
+      const enriched = candidates.map(t => {
+        const distance = haversineDistance(userCoords, t);
+        const bearing = calculateBearing(userCoords, { lat: t.lat, lon: t.lon });
+        return { ...t, distance, bearing };
+      });
+
+      let targets;
+      if (currentSearchTerm && currentSearchTerm !== '') {
+        // Show the top 3 closest species if a search term is active.
+        targets = enriched.sort((a,b)=>a.distance-b.distance).slice(0, 3);
+      } else {
+        // Otherwise, show species within 100m, limited to the 3 closest to reduce clutter.
+        targets = enriched.filter(t => t.distance <= 100).sort((a,b)=>a.distance-b.distance).slice(0,3);
+      }
+
+      compassArrows.innerHTML = '';
+      arMarkers.innerHTML = '';
+
+      // Draw arrows on the compass overlay for each target.
+      targets.forEach((target, i) => {
+        const relative = (target.bearing - userHeading + 360) % 360;
+        const arrow = document.createElement('div');
+        arrow.className = 'arrow absolute top-1/2 left-1/2 w-3 h-3';
+        const size = 14 + Math.min(120, target.distance/2);
+        arrow.style.transform = `rotate(${relative}deg) translateY(-${size}px)`;
+        
+        // Create an outer wrapper for the arrow and a separate, unrotated text label.
+        const arrowWrapper = document.createElement('div');
+        arrowWrapper.className = 'absolute inset-0 flex justify-center items-center pointer-events-none';
+        
+        const arrowHead = document.createElement('div');
+        arrowHead.style.cssText = `
+          width: 0;
+          height: 0;
+          border-left: 6px solid transparent;
+          border-right: 6px solid transparent;
+          border-bottom: 10px solid #60a5fa;
+          position: absolute;
+          top: 50%;
+          left: 50%;
+          transform: translate(-50%, -50%) rotate(${relative}deg) translateY(-${size}px);
+        `;
+
+        const label = document.createElement('div');
+        label.className = 'arrow-label';
+        label.textContent = `${target.speciesName} (${Math.round(target.distance)}m)`;
+        label.style.top = `calc(50% - ${size}px - 20px)`; // Position label above the arrow
+        label.style.transform = `translateX(${relative > 90 && relative < 270 ? '0' : '0'})`; // Keep label horizontal
+        label.style.left = `calc(50% + ${Math.sin(toRad(relative)) * size}px)`; // Offset label based on bearing
+        label.style.top = `calc(50% - ${Math.cos(toRad(relative)) * size}px)`;
+        
+        arrowWrapper.appendChild(arrowHead);
+        arrowWrapper.appendChild(label);
+        compassArrows.appendChild(arrowWrapper);
+
+        // If very close, show AR marker
+        if (target.distance <= 10) {
+          const marker = document.createElement('div');
+          marker.className = 'absolute';
+          let leftPct = ((relative - 180) / 180) * 50 + 50;
+          leftPct = Math.max(2, Math.min(98, leftPct));
+          marker.style.left = leftPct + '%';
+          marker.style.top = '60%';
+          marker.innerHTML = `<div style="background:#2563eb;color:white;padding:6px;border-radius:999px;font-size:12px;text-align:center;">${target.speciesName}</div>
+                              <div style="text-align:center;font-size:11px;color:white;margin-top:4px;">${target.distance.toFixed(1)}m</div>`;
+          arMarkers.appendChild(marker);
+        }
+      });
+
+      // Update the status message based on the number of targets.
+      if (targets.length === 0) {
+        statusEl.textContent = currentSearchTerm ? `No sightings found for “${currentSearchTerm}” nearby.` : 'No sightings within 100m.';
+      } else {
+        if (currentSearchTerm) {
+          statusEl.textContent = `Showing ${targets.length} closest sighting(s) for “${currentSearchTerm}”.`;
+        } else {
+          statusEl.textContent = `Showing ${targets.length} nearby sighting(s) within 100m.`;
+        }
+      }
+    }
+
+    // --------------------------------------------------------------------------
+    // ---------- Sensor and Camera Initialization -------------
+    // --------------------------------------------------------------------------
+
+    // Initializes the camera video feed.
+    async function initCamera() {
+      try {
+        const s = await navigator.mediaDevices.getUserMedia({ video: { facingMode: 'environment' }, audio: false });
+        camera.srcObject = s;
+      } catch (err) {
+        console.warn('Camera not available:', err);
+      }
+    }
+
+    // Initializes the geolocation watcher to get the user's coordinates.
+    function initGeolocation() {
+      if (!navigator.geolocation) {
+        coordsEl.textContent = 'Geolocation not supported';
+        return;
+      }
+      navigator.geolocation.watchPosition(pos => {
+        userCoords.lat = pos.coords.latitude;
+        userCoords.lon = pos.coords.longitude;
+        coordsEl.textContent = `Lat: ${userCoords.lat.toFixed(6)}, Lon: ${userCoords.lon.toFixed(6)}`;
+        updateCompassDisplay();
+      }, err => {
+        console.warn('Geolocation error', err);
+        coordsEl.textContent = 'Geolocation denied';
+      }, { enableHighAccuracy: true, maximumAge: 2000, timeout: 10000 });
+    }
+
+    // Initializes the compass sensor to get the user's heading.
+    async function initCompass() {
+      const setHeading = (deg) => {
+        userHeading = (360 - deg) % 360;
+        updateCompassDisplay();
+      };
+
+      // Request permission on iOS 13+
+      if (typeof DeviceOrientationEvent !== 'undefined' && DeviceOrientationEvent.requestPermission) {
+        try {
+          const perm = await DeviceOrientationEvent.requestPermission();
+          if (perm === 'granted') {
+            window.addEventListener('deviceorientationabsolute' , handleDO, true);
+            window.addEventListener('deviceorientation', handleDO, true);
+          } else {
+            statusEl.textContent = 'Compass permission denied.';
+          }
+        } catch (err) {
+          console.warn('DO permission error', err);
+          statusEl.textContent = 'Compass permission error.';
+          window.addEventListener('deviceorientation', handleDO, true);
+        }
+      } else {
+        // Standard browsers
+        window.addEventListener('deviceorientationabsolute', handleDO, true);
+        window.addEventListener('deviceorientation', handleDO, true);
+      }
+
+      function handleDO(e) {
+        let heading = null;
+        if (e.absolute === true && typeof e.alpha === 'number') {
+          heading = e.alpha;
+        } else if (typeof e.webkitCompassHeading === 'number') {
+          heading = e.webkitCompassHeading;
+        } else if (typeof e.alpha === 'number') {
+          heading = e.alpha;
+        }
+        if (heading !== null && !isNaN(heading)) {
+          setHeading((heading + 360) % 360);
+          headingEl.textContent = `Heading: ${Math.round(userHeading)}°`;
+        }
+      }
+    }
+
+    // --------------------------------------------------------------------------
+    // ---------- Main Initialization Function -------------
+    // --------------------------------------------------------------------------
+
+    (async function init() {
+      await loadCSV();
+      await initCamera();
+      initGeolocation();
+      await initCompass();
+      updateCompassDisplay();
+    })();
+  </script>
+</body>
+</html>
