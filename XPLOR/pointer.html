@@ -166,11 +166,9 @@
                 allSpeciesNames = parseCSV(csvText);
                 renderSpeciesList(allSpeciesNames);
                 statusMessageSearch.textContent = '';
-                statusDiv.textContent = 'Data loaded. Waiting for location...';
             } catch (error) {
                 console.error('Failed to fetch or parse species data:', error);
                 statusMessageSearch.textContent = 'Failed to load data. Please check the network.';
-                statusDiv.textContent = 'Failed to load species data.';
             } finally {
                 loadingSpinner.style.display = 'none';
             }
@@ -240,7 +238,7 @@
                 })
                 .catch(err => {
                     console.error("Camera access error:", err);
-                    statusDiv.textContent = 'Camera access denied or not available.';
+                    statusDiv.innerHTML = '<span class="text-red-500">Camera access denied or not available.</span>';
                 });
         }
 
@@ -256,7 +254,7 @@
                     updateUI();
                 });
             } else {
-                statusDiv.textContent = 'Device orientation not supported.';
+                statusDiv.innerHTML = '<span class="text-red-500">Device orientation not supported.</span>';
             }
 
             if (navigator.geolocation) {
@@ -264,16 +262,17 @@
                     (position) => {
                         userCoords.lat = position.coords.latitude;
                         userCoords.lon = position.coords.longitude;
+                        statusDiv.innerHTML = `Location: ${userCoords.lat.toFixed(6)}, ${userCoords.lon.toFixed(6)} | Accuracy: ${position.coords.accuracy.toFixed(1)}m`;
                         updateUI();
                     },
                     (error) => {
                         console.error("Geolocation error:", error);
-                        statusDiv.textContent = 'Geolocation access denied.';
+                        statusDiv.innerHTML = '<span class="text-red-500">Geolocation access denied.</span>';
                     },
                     { enableHighAccuracy: true }
                 );
             } else {
-                statusDiv.textContent = 'Geolocation not supported.';
+                statusDiv.innerHTML = '<span class="text-red-500">Geolocation not supported.</span>';
             }
         }
         
