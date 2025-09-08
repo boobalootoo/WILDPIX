@@ -1,0 +1,306 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Searchable Species Menu</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;600;700&display=swap" rel="stylesheet">
+    <style>
+        body {
+            font-family: 'Inter', sans-serif;
+            background-color: #1a202c;
+            color: white;
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            min-height: 100vh;
+            padding: 1rem;
+        }
+    </style>
+</head>
+<body class="bg-gray-900 text-gray-100">
+
+    <div class="flex flex-col items-center p-6 bg-gray-800 rounded-3xl shadow-xl w-full max-w-md space-y-4">
+        <h1 class="text-3xl font-bold text-center mb-4">Species Tracker</h1>
+
+        <div id="status-message" class="text-sm font-semibold text-orange-400 text-center">
+            Initializing...
+        </div>
+
+        <div class="relative w-full max-w-sm aspect-video rounded-3xl overflow-hidden bg-black shadow-lg">
+            <video id="camera-feed" class="w-full h-full object-cover" autoplay playsinline></video>
+            
+            <div class="absolute inset-0 flex justify-center items-center pointer-events-none z-20">
+                <div class="w-36 h-36 rounded-full border-4 border-gray-400 relative">
+                    <div id="compass-needle" class="w-1.5 h-16 bg-white absolute top-1/2 left-1/2 transform -translate-x-1/2 -translate-y-full origin-bottom rounded-t-full"></div>
+                    <div class="absolute inset-0 flex justify-center items-center text-sm font-bold text-red-500">N</div>
+                    <div class="absolute inset-0 flex justify-center items-center text-sm font-bold text-gray-300 transform rotate-90">E</div>
+                    <div class="absolute inset-0 flex justify-center items-center text-sm font-bold text-gray-300 transform rotate-180">S</div>
+                    <div class="absolute inset-0 flex justify-center items-center text-sm font-bold text-gray-300 transform -rotate-90">W</div>
+                    <div id="compass-arrows" class="absolute inset-0"></div>
+                </div>
+            </div>
+
+            <div id="ar-markers" class="absolute inset-0 z-30"></div>
+        </div>
+
+        <!-- Search Input -->
+        <h2 class="text-xl font-semibold text-center mt-4">Find a Species</h2>
+        <div class="relative w-full">
+            <input 
+                id="search-input" 
+                type="text" 
+                placeholder="Search for a species..." 
+                class="w-full p-3 rounded-lg bg-gray-700 text-white focus:outline-none focus:ring-2 focus:ring-blue-500 placeholder-gray-400"
+            >
+            <div id="loading-spinner" class="absolute inset-y-0 right-0 pr-3 flex items-center" style="display: none;">
+                <svg class="animate-spin h-5 w-5 text-gray-400" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24">
+                    <circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"></circle>
+                    <path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path>
+                </svg>
+            </div>
+        </div>
+        
+        <!-- Dropdown Results -->
+        <div 
+            id="species-list" 
+            class="w-full h-80 overflow-y-auto bg-gray-700 rounded-lg border border-gray-600"
+        >
+            <p id="status-message-search" class="p-4 text-center text-gray-400">Loading species data...</p>
+        </div>
+    </div>
+
+    <script>
+        const searchInput = document.getElementById('search-input');
+        const speciesListContainer = document.getElementById('species-list');
+        const statusMessageSearch = document.getElementById('status-message-search');
+        const loadingSpinner = document.getElementById('loading-spinner');
+
+        const statusDiv = document.getElementById('status-message');
+        const compassNeedle = document.getElementById('compass-needle');
+        const compassArrows = document.getElementById('compass-arrows');
+        const arMarkers = document.getElementById('ar-markers');
+        const cameraFeed = document.getElementById('camera-feed');
+
+        let allSpeciesNames = [];
+        let speciesData = [];
+        let userCoords = { lat: null, lon: null };
+        let userHeading = 0;
+        let currentSearchTerm = '';
+        const CSV_URL = 'https://raw.githubusercontent.com/boobalootoo/WILDPIX/main/cardinfo.csv';
+        const sampleSpeciesData = [
+            { speciesName: 'Lion', lat: 51.5074, lon: -0.1278 }, // London
+            { speciesName: 'Tiger', lat: 51.52, lon: -0.14 },
+            { speciesName: 'Tiger', lat: 51.505, lon: -0.115 },
+            { speciesName: 'Elephant', lat: 51.51, lon: -0.13 },
+            { speciesName: 'Lion', lat: 51.50, lon: -0.12 },
+            { speciesName: 'Tiger', lat: 51.53, lon: -0.15 }
+        ];
+
+        function haversineDistance(coords1, coords2) {
+            const toRad = (x) => x * Math.PI / 180;
+            const R = 6371e3; // metres
+            const φ1 = toRad(coords1.lat);
+            const φ2 = toRad(coords2.lat);
+            const Δφ = toRad(coords2.lat - coords1.lat);
+            const Δλ = toRad(coords2.lon - coords1.lon);
+            const a = Math.sin(Δφ / 2) * Math.sin(Δφ / 2) +
+                      Math.cos(φ1) * Math.cos(φ2) *
+                      Math.sin(Δλ / 2) * Math.sin(Δλ / 2);
+            const c = 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
+            return R * c;
+        }
+
+        function calculateBearing(userCoords, targetCoords) {
+            const toRad = (x) => x * Math.PI / 180;
+            const φ1 = toRad(userCoords.lat);
+            const φ2 = toRad(targetCoords.lat);
+            const Δλ = toRad(targetCoords.lon - userCoords.lon);
+            const y = Math.sin(Δλ) * Math.cos(φ2);
+            const x = Math.cos(φ1) * Math.sin(φ2) -
+                      Math.sin(φ1) * Math.cos(φ2) * Math.cos(Δλ);
+            let bearing = Math.atan2(y, x) * 180 / Math.PI;
+            bearing = (bearing + 360) % 360;
+            return bearing;
+        }
+
+        function parseCSV(text) {
+            const rows = text.trim().split('\n');
+            const species = rows.map(row => row.split(',')[0].trim()).slice(1);
+            return species.filter(name => name.length > 0);
+        }
+
+        function renderSpeciesList(filteredSpecies) {
+            speciesListContainer.innerHTML = '';
+            if (filteredSpecies.length === 0) {
+                speciesListContainer.innerHTML = `<p class="p-4 text-center text-gray-400">No species found.</p>`;
+                return;
+            }
+            
+            filteredSpecies.forEach(species => {
+                const item = document.createElement('div');
+                item.textContent = species;
+                item.className = 'p-3 hover:bg-gray-600 cursor-pointer transition-colors duration-200';
+                item.onclick = () => {
+                    searchInput.value = species;
+                    speciesListContainer.innerHTML = '';
+                    currentSearchTerm = species;
+                    updateUI();
+                };
+                speciesListContainer.appendChild(item);
+            });
+        }
+
+        async function fetchSpeciesNamesFromCSV() {
+            loadingSpinner.style.display = 'flex';
+            statusMessageSearch.textContent = 'Loading species data...';
+            try {
+                const response = await fetch(CSV_URL);
+                if (!response.ok) {
+                    throw new Error(`HTTP error! Status: ${response.status}`);
+                }
+                const csvText = await response.text();
+                allSpeciesNames = parseCSV(csvText);
+                renderSpeciesList(allSpeciesNames);
+                statusMessageSearch.textContent = '';
+                statusDiv.textContent = 'Data loaded. Waiting for location...';
+            } catch (error) {
+                console.error('Failed to fetch or parse species data:', error);
+                statusMessageSearch.textContent = 'Failed to load data. Please check the network.';
+                statusDiv.textContent = 'Failed to load species data.';
+            } finally {
+                loadingSpinner.style.display = 'none';
+            }
+        }
+        
+        function updateUI() {
+            if (userCoords.lat === null || userCoords.lon === null) return;
+            
+            compassArrows.innerHTML = '';
+            arMarkers.innerHTML = '';
+
+            let targets = [];
+            let filteredData = [];
+            
+            speciesData = sampleSpeciesData;
+
+            if (currentSearchTerm) {
+                filteredData = speciesData.filter(d => d.speciesName.toLowerCase() === currentSearchTerm.toLowerCase());
+            } else {
+                filteredData = speciesData;
+            }
+
+            filteredData.forEach(target => {
+                 const distance = haversineDistance(userCoords, target);
+                 targets.push({ ...target, distance: distance, bearing: calculateBearing(userCoords, target) });
+            });
+
+            if (currentSearchTerm) {
+                targets.sort((a, b) => a.distance - b.distance);
+                targets = targets.slice(0, 3);
+            } else {
+                targets = targets.filter(target => target.distance <= 100);
+            }
+            
+            targets.forEach(target => {
+                const arrowDirection = (target.bearing - userHeading + 360) % 360;
+
+                const arrow = document.createElement('div');
+                arrow.className = 'absolute top-1/2 left-1/2 w-4 h-4 transform -translate-x-1/2 -translate-y-1/2 pointer-events-none transition-transform duration-500';
+                arrow.style.transform = `rotate(${arrowDirection}deg) translateY(-80px)`;
+                arrow.innerHTML = `
+                    <div class="w-0 h-0 border-l-4 border-r-4 border-b-8 border-l-transparent border-r-transparent border-b-blue-500"></div>
+                    <span class="absolute text-xs whitespace-nowrap -bottom-5" style="transform: translateX(-50%);">${target.speciesName} (${target.distance.toFixed(0)}m)</span>
+                `;
+                compassArrows.appendChild(arrow);
+                
+                if (target.distance <= 10) {
+                    const marker = document.createElement('div');
+                    marker.className = 'absolute text-center';
+                    let leftOffset = (arrowDirection - 180) / 180 * 50 + 50;
+                    leftOffset = Math.max(0, Math.min(100, leftOffset));
+                    marker.style.left = `${leftOffset}%`;
+                    marker.style.top = '50%';
+                    marker.innerHTML = `
+                        <div class="bg-blue-500 text-white rounded-full p-2 text-xs">${target.speciesName}</div>
+                        <div class="text-xs mt-1 text-white">${target.distance.toFixed(1)}m</div>
+                    `;
+                    arMarkers.appendChild(marker);
+                }
+            });
+        }
+
+        function initCamera() {
+            navigator.mediaDevices.getUserMedia({ video: { facingMode: 'environment' } })
+                .then(stream => {
+                    cameraFeed.srcObject = stream;
+                })
+                .catch(err => {
+                    console.error("Camera access error:", err);
+                    statusDiv.textContent = 'Camera access denied or not available.';
+                });
+        }
+
+        function initSensors() {
+            if (window.DeviceOrientationEvent) {
+                window.addEventListener('deviceorientation', (event) => {
+                    if (event.webkitCompassHeading) {
+                        userHeading = 360 - event.webkitCompassHeading;
+                    } else {
+                        userHeading = 360 - event.alpha;
+                    }
+                    compassNeedle.style.transform = `rotate(${userHeading}deg)`;
+                    updateUI();
+                });
+            } else {
+                statusDiv.textContent = 'Device orientation not supported.';
+            }
+
+            if (navigator.geolocation) {
+                navigator.geolocation.watchPosition(
+                    (position) => {
+                        userCoords.lat = position.coords.latitude;
+                        userCoords.lon = position.coords.longitude;
+                        updateUI();
+                    },
+                    (error) => {
+                        console.error("Geolocation error:", error);
+                        statusDiv.textContent = 'Geolocation access denied.';
+                    },
+                    { enableHighAccuracy: true }
+                );
+            } else {
+                statusDiv.textContent = 'Geolocation not supported.';
+            }
+        }
+        
+        searchInput.addEventListener('input', (event) => {
+            const query = event.target.value.toLowerCase();
+            const filtered = allSpeciesNames.filter(species => 
+                species.toLowerCase().includes(query)
+            );
+            renderSpeciesList(filtered);
+            if (query === "") {
+                speciesListContainer.style.display = 'block';
+                currentSearchTerm = '';
+                updateUI();
+            } else {
+                speciesListContainer.style.display = 'block';
+            }
+        });
+
+        document.addEventListener('click', (event) => {
+            if (!searchInput.contains(event.target) && !speciesListContainer.contains(event.target)) {
+                speciesListContainer.style.display = 'none';
+            }
+        });
+
+        fetchSpeciesNamesFromCSV();
+        initCamera();
+        initSensors();
+    </script>
+</body>
+</html>
