@@ -1,0 +1,125 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0"/>
+  <title>Species Selector</title>
+  <script src="https://cdn.tailwindcss.com"></script>
+  <!-- PapaParse for safe CSV parsing -->
+  <script src="https://cdn.jsdelivr.net/npm/papaparse@5.4.1/papaparse.min.js"></script>
+</head>
+<body class="bg-gray-900 text-white flex flex-col items-center p-6">
+  <h1 class="text-2xl font-bold mb-4">Species Selector</h1>
+
+  <!-- Search input -->
+  <input 
+    id="searchInput" 
+    type="text" 
+    placeholder="Search species..." 
+    class="w-full max-w-md p-2 rounded text-black mb-4"
+  />
+
+  <!-- Loading spinner -->
+  <div id="loadingSpinner" class="hidden items-center justify-center">
+    <p>Loading species data...</p>
+  </div>
+
+  <!-- Status message -->
+  <p id="statusMessageSearch" class="mb-4 text-sm text-red-400"></p>
+
+  <!-- Species list -->
+  <div id="speciesListContainer" class="w-full max-w-md bg-gray-800 rounded-lg overflow-y-auto max-h-96"></div>
+
+  <script>
+    const CSV_URL = 'https://raw.githubusercontent.com/boobalootoo/WILDPIX/main/cardinfo.csv';
+
+    let speciesData = [];
+    let currentSearchTerm = '';
+
+    const searchInput = document.getElementById('searchInput');
+    const speciesListContainer = document.getElementById('speciesListContainer');
+    const loadingSpinner = document.getElementById('loadingSpinner');
+    const statusMessageSearch = document.getElementById('statusMessageSearch');
+
+    function renderSpeciesList(filteredSpecies) {
+      speciesListContainer.innerHTML = '';
+      if (filteredSpecies.length === 0) {
+        speciesListContainer.innerHTML = `<p class="p-4 text-center text-gray-400">No species found.</p>`;
+        return;
+      }
+
+      filteredSpecies.forEach(species => {
+        const item = document.createElement('div');
+        item.textContent = `${species.speciesName} (${species.lat}, ${species.lon})`;
+        item.className = 'p-3 hover:bg-gray-600 cursor-pointer transition-colors duration-200';
+        item.onclick = () => {
+          searchInput.value = species.speciesName;
+          speciesListContainer.innerHTML = '';
+          currentSearchTerm = species.speciesName;
+        };
+        speciesListContainer.appendChild(item);
+      });
+    }
+
+    async function fetchSpeciesNamesFromCSV() {
+      loadingSpinner.style.display = 'flex';
+      statusMessageSearch.textContent = 'Loading species data...';
+
+      try {
+        const response = await fetch(CSV_URL);
+        if (!response.ok) throw new Error(`HTTP error! Status: ${response.status}`);
+        const csvText = await response.text();
+
+        // Parse without treating first row as headers
+        const parsed = Papa.parse(csvText, { header: false, skipEmptyLines: true });
+
+        speciesData = parsed.data
+          .filter(row => row.length >= 4 && row[0] && row[3]) // at least 4 columns, with name & coords
+          .map(row => {
+            const name = row[0].trim();
+            const coord = row[3].trim();
+            let lat, lon;
+
+            if (coord.includes(',')) {
+              [lat, lon] = coord.split(',').map(Number);
+            } else {
+              [lat, lon] = coord.split(/\s+/).map(Number);
+            }
+
+            if (!isNaN(lat) && !isNaN(lon)) {
+              return { speciesName: name, lat, lon };
+            } else {
+              return null;
+            }
+          })
+          .filter(Boolean); // remove invalid rows
+
+        renderSpeciesList(speciesData);
+        statusMessageSearch.textContent = '';
+      } catch (err) {
+        console.error('Error loading CSV:', err);
+        statusMessageSearch.textContent = 'Failed to load species data.';
+      } finally {
+        loadingSpinner.style.display = 'none';
+      }
+    }
+
+    searchInput.addEventListener('input', (event) => {
+      const query = event.target.value.toLowerCase();
+      const filtered = speciesData.filter(s => 
+        s.speciesName.toLowerCase().includes(query)
+      );
+      renderSpeciesList(filtered);
+      if (query === "") {
+        speciesListContainer.style.display = 'block';
+        currentSearchTerm = '';
+      } else {
+        speciesListContainer.style.display = 'block';
+      }
+    });
+
+    // Load data on page start
+    fetchSpeciesNamesFromCSV();
+  </script>
+</body>
+</html>
