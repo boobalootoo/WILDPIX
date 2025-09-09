@@ -1,0 +1,791 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width,initial-scale=1" />
+  <title>Species AR Compass</title>
+  <script src="https://cdn.tailwindcss.com"></script>
+  <script src="https://cdn.jsdelivr.net/npm/papaparse@5.4.1/papaparse.min.js"></script>
+  <script async src="https://unpkg.com/es-module-shims@1.6.3/dist/es-module-shims.js"></script>
+  <script type="importmap">
+  {
+    "imports": {
+      "three": "https://cdn.jsdelivr.net/npm/three@0.128.0/build/three.module.js",
+      "three/addons/": "https://cdn.jsdelivr.net/npm/three@0.128.0/examples/jsm/"
+    }
+  }
+  </script>
+  <style>
+    :root {
+      --bg: #0f172a;
+      --card: #0b1220;
+      --accent: #38bdf8;
+      --muted: #94a3b8;
+    }
+    html,body { height:100%; margin:0; font-family:system-ui,-apple-system,Segoe UI,Roboto,"Helvetica Neue",Arial; background:linear-gradient(180deg,var(--bg),#071027); color:#e6eef8; }
+    .main-container { display:grid; place-items:center; min-height:100vh; }
+    .card {
+      width: min(420px, 92vw);
+      padding: 20px;
+      border-radius: 14px;
+      background: linear-gradient(180deg, rgba(255,255,255,0.02), rgba(0,0,0,0.12));
+      box-shadow: 0 8px 30px rgba(2,6,23,0.6);
+      text-align: center;
+    }
+    h1 { margin:0 0 10px 0; font-size:1.2rem; }
+    .compass {
+      width: 260px;
+      height: 260px;
+      margin: 18px auto;
+      position: relative;
+      border-radius: 50%;
+      background:
+        radial-gradient(circle at 50% 50%, rgba(255,255,255,0.02), transparent 40%),
+        conic-gradient(from 0deg, rgba(255,255,255,0.02), rgba(255,255,255,0.0));
+      border: 4px solid rgba(255,255,255,0.04);
+      display:flex;
+      align-items:center;
+      justify-content:center;
+      overflow:hidden;
+    }
+    .rose {
+      width: 84%;
+      height: 84%;
+      border-radius:50%;
+      position:relative;
+      transform-origin:center center;
+      transition: transform 120ms linear;
+      display:grid;
+      place-items:center;
+    }
+    /* arrow / needle */
+    .needle {
+      width: 6px;
+      height: 50%;
+      background: linear-gradient(180deg, var(--accent), rgba(56,189,248,0.7));
+      position:absolute;
+      top: 6%;
+      left: 50%;
+      transform-origin: 50% 100%;
+      border-radius: 4px;
+      box-shadow: 0 6px 18px rgba(8,20,34,0.6);
+    }
+    .needle::after {
+      content:"";
+      position:absolute;
+      bottom:-18px;
+      left:50%;
+      transform:translateX(-50%);
+      width:0;height:0;border-left:10px solid transparent;border-right:10px solid transparent;border-top:18px solid var(--accent);
+    }
+    .hub {
+      width: 20px; height: 20px; background: #0b1220; border:3px solid var(--accent); border-radius:50%; z-index:2;
+    }
+    .deg {
+      margin-top:12px;
+      font-weight:600;
+      font-size:1.1rem;
+    }
+    .small { color:var(--muted); font-size:0.85rem; margin-top:6px;}
+    .controls { display:flex; gap:10px; justify-content:center; margin-top:14px; flex-wrap:wrap; }
+    button {
+      background:transparent;
+      color:var(--accent);
+      border:1px solid rgba(56,189,248,0.15);
+      padding:8px 12px;
+      border-radius:8px;
+      cursor:pointer;
+      font-weight:600;
+      backdrop-filter: blur(4px);
+    }
+    .warn { color:#ffd1a3; font-size:0.9rem; margin-top:8px }
+    footer { margin-top:12px; font-size:0.78rem; color:var(--muted) }
+    
+    /* Styles for the AR markers from the previous version */
+    .ar-label {
+      background-color: rgba(31, 41, 55, 0.7);
+      padding: 2px 6px;
+      border-radius: 999px;
+      font-size: 11px;
+      white-space: nowrap;
+      position: absolute;
+      transform: translateX(-50%);
+      pointer-events: auto;
+      text-align: center;
+    }
+    .arrow-container {
+      position: absolute;
+      top: 50%;
+      left: 50%;
+      transform-origin: 50% 50%;
+    }
+    .species-arrow {
+      width: 0;
+      height: 0;
+      border-left: 6px solid transparent;
+      border-right: 6px solid transparent;
+      border-bottom: 10px solid #60a5fa;
+      position: absolute;
+      top: 50%;
+      left: 50%;
+      transform: translate(-50%, -50%) translateY(-50px);
+    }
+    /* Styles for the camera and three.js canvas */
+    video#cameraFeed {
+      position: fixed;
+      top:0; left:0;
+      width:100%; height:100%;
+      object-fit: cover;
+      z-index:-1; /* camera at back */
+    }
+    canvas#arCanvas {
+      position: fixed;
+      top:0; left:0;
+      width:100%; height:100%;
+      z-index:0; /* canvas above video */
+    }
+    /* Hide the 3D models initially */
+    #arCanvas { display: none; }
+
+    /* New styles for the species list details */
+    .species-list-item {
+      text-align: left;
+      line-height: 1.25rem;
+    }
+    .species-list-coords {
+      font-size: 0.7rem;
+      color: var(--muted);
+    }
+  </style>
+</head>
+<body class="bg-gray-900 text-gray-100">
+  <div class="main-container">
+    <div class="card">
+      <h1 class="text-xl font-bold text-center">Species AR Compass</h1>
+  
+      <!-- Status messages are displayed here to inform the user. -->
+      <div id="status" class="text-sm text-orange-300 text-center">Initializing…</div>
+  
+      <!-- Main camera and compass display area -->
+      <div class="relative w-full aspect-video rounded-xl overflow-hidden bg-black">
+        <!-- Camera video feed -->
+        <video id="cameraFeed" class="w-full h-full object-cover" autoplay playsinline></video>
+        <!-- The 3D AR canvas that overlays the camera feed -->
+        <canvas id="arCanvas"></canvas>
+  
+        <!-- Compass overlay on top of the video feed -->
+        <div class="absolute inset-0 flex justify-center items-center pointer-events-none">
+          <div class="compass" id="compass">
+            <!-- The compass face and species markers now rotate -->
+            <div class="rose" id="rose">
+              <div class="needle" id="needle"></div>
+              <div class="hub"></div>
+              <!-- AR markers that rotate with the rose -->
+              <div id="compass-arrows" class="absolute inset-0"></div>
+            </div>
+          </div>
+        </div>
+      </div>
+  
+      <!-- Search input for filtering species -->
+      <div>
+        <input id="search" type="text" placeholder="Search species..." 
+               class="w-full p-3 rounded-lg bg-gray-700 placeholder-gray-300 focus:outline-none" />
+      </div>
+  
+      <!-- Dropdown list of species, initially showing all -->
+      <div id="list" class="bg-gray-700 rounded-lg max-h-60 overflow-y-auto p-2">
+        <p id="list-status" class="text-center text-gray-300 p-4">Loading species...</p>
+      </div>
+  
+      <!-- Displays current coordinates and heading -->
+      <div class="flex justify-between text-xs text-gray-400 mt-2">
+        <div id="coords">Lat: — , Lon: —</div>
+        <div id="heading">Heading: —°</div>
+      </div>
+      
+      <div class="controls">
+        <button id="permBtn">Allow Motion / Orientation</button>
+        <button id="magBtn">Use Magnetometer (if available)</button>
+        <button id="calBtn">Calibrate Tip</button>
+      </div>
+
+      <div class="warn" id="warn"></div>
+      <footer>
+        Tip: For best results hold the phone flat (screen parallel to the ground) and keep away from metal/phone cases that contain magnets. On iOS you must allow Motion & Orientation permission.
+      </footer>
+    </div>
+  </div>
+
+  <script type="module">
+    import * as THREE from 'three';
+    import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
+
+    // CSV URL for species data
+    const CSV_URL = 'https://raw.githubusercontent.com/boobalootoo/WILDPIX/main/cardinfo.csv';
+    const MODELS_API_URL = "https://api.github.com/repos/boobalootoo/WILDPIX/contents/BLOX3DVIEWER/JSON";
+
+    // UI elements
+    const cameraFeed = document.getElementById('cameraFeed');
+    const arCanvas = document.getElementById('arCanvas');
+    const statusEl = document.getElementById('status');
+    const listEl = document.getElementById('list');
+    const listStatus = document.getElementById('list-status');
+    const searchInput = document.getElementById('search');
+    const coordsEl = document.getElementById('coords');
+    const headingEl = document.getElementById('heading');
+    const rose = document.getElementById('rose');
+    const compassArrows = document.getElementById('compass-arrows');
+    const warnEl = document.getElementById('warn');
+    const permBtn = document.getElementById('permBtn');
+    const magBtn = document.getElementById('magBtn');
+    const calBtn = document.getElementById('calBtn');
+
+    // App state
+    let speciesData = [];
+    let userCoords = { lat: null, lon: null };
+    let userHeading = null;
+    let currentSearchTerm = '';
+    let useMagnetometer = false;
+    let magSensor = null;
+    let calibrationOffset = 0;
+    
+    // Low-pass filter variables for a stable compass
+    const SMOOTHING_FACTOR = 0.1;
+    
+    // 3D scene state
+    const scene = new THREE.Scene();
+    const camera = new THREE.PerspectiveCamera(60, window.innerWidth / window.innerHeight, 0.1, 1000);
+    const renderer = new THREE.WebGLRenderer({ alpha: true, antialias: true, canvas: arCanvas });
+    let models = {}; // Stores loaded 3D models
+    let loadedModelUrls = {}; // Tracks which models have been loaded
+    let activeModels = new Map(); // Stores active models and their associated data
+    
+    // Hardcoded sizes for each species (as no data exists)
+    const speciesSizeMultipliers = {
+      'Red Panda': 0.7,
+      'Polar Bear': 1.5,
+      'Tiger': 1.2,
+      'Kingfisher': 0.3,
+      'Elephant': 2.0,
+      'Monkey': 0.8,
+    };
+
+    // --------------------------------------------------------------------------
+    // ---------- 3D Scene Initialization and Rendering -------------
+    // --------------------------------------------------------------------------
+    function init3DScene() {
+      // Position the camera
+      camera.position.set(0, 0, 0.1);
+
+      // Lights
+      const ambientLight = new THREE.AmbientLight(0xffffff, 0.8);
+      scene.add(ambientLight);
+      const directionalLight = new THREE.DirectionalLight(0xffffff, 0.5);
+      directionalLight.position.set(0, 1, 0.5);
+      scene.add(directionalLight);
+
+      // Resize listener for the 3D scene
+      window.addEventListener("resize", () => {
+        const width = window.innerWidth;
+        const height = window.innerHeight;
+        renderer.setSize(width, height);
+        camera.aspect = width / height;
+        camera.updateProjectionMatrix();
+      });
+
+      // Start the animation loop
+      animate3D();
+    }
+    
+    function animate3D() {
+      requestAnimationFrame(animate3D);
+      renderer.render(scene, camera);
+    }
+    
+    // --------------------------------------------------------------------------
+    // ---------- 3D Model Loading and Management -------------
+    // --------------------------------------------------------------------------
+
+    async function loadVoxelModels() {
+      try {
+        const res = await fetch(MODELS_API_URL);
+        const files = await res.json();
+        files.filter(f => f.name.endsWith(".json")).forEach(f => {
+          const speciesName = f.name.replace('.json', '');
+          loadedModelUrls[speciesName] = f.download_url;
+        });
+      } catch (err) {
+        console.error("Failed to load 3D model list:", err);
+      }
+    }
+    
+    async function getAndDisplayModel(target, relativeBearing, distance) {
+        // If the model is already active, just update its position and scale
+        if (activeModels.has(target.speciesName)) {
+            const model = activeModels.get(target.speciesName);
+            const scaleFactor = getModelScale(target, distance);
+            model.scale.setScalar(scaleFactor);
+            // The model's position in 3D space is based on a fixed circle around the camera,
+            // rotated by the relative bearing
+            const modelPos = new THREE.Vector3(1, 0, 0).applyAxisAngle(new THREE.Vector3(0,1,0), -toRad(relativeBearing));
+            modelPos.normalize().multiplyScalar(1); // Place models 1 unit away
+            model.position.copy(modelPos);
+            return;
+        }
+
+        // Load the model if it's not already in memory
+        const url = loadedModelUrls[target.speciesName];
+        if (!url || models[target.speciesName]) return;
+
+        try {
+            const res = await fetch(url);
+            const json = await res.json();
+            const loader = new THREE.ObjectLoader();
+            const obj = loader.parse(json);
+            
+            // Normalize the model size and store it
+            const box = new THREE.Box3().setFromObject(obj);
+            const size = box.getSize(new THREE.Vector3()).length();
+            obj.scale.setScalar(1 / size);
+            models[target.speciesName] = obj;
+            
+            // Add to scene and mark as active
+            scene.add(obj);
+            activeModels.set(target.speciesName, obj);
+
+            // Update position and scale immediately
+            const scaleFactor = getModelScale(target, distance);
+            obj.scale.setScalar(scaleFactor);
+            const modelPos = new THREE.Vector3(1, 0, 0).applyAxisAngle(new THREE.Vector3(0,1,0), -toRad(relativeBearing));
+            modelPos.normalize().multiplyScalar(1);
+            obj.position.copy(modelPos);
+            
+            arCanvas.style.display = 'block';
+
+        } catch (err) {
+            console.error("Error loading model:", err);
+        }
+    }
+    
+    function getModelScale(target, distance) {
+      const MAX_DISTANCE = 10;
+      const baseSize = speciesSizeMultipliers[target.speciesName] || 1;
+      const scale = baseSize * (1 - (distance / MAX_DISTANCE));
+      return Math.max(0.1, scale); // Clamp to a minimum size
+    }
+
+    // --------------------------------------------------------------------------
+    // ---------- Math Helpers for Haversine Distance and Bearing -------------
+    // --------------------------------------------------------------------------
+
+    function toRad(deg) { return deg * Math.PI / 180; }
+    function toDeg(rad) { return rad * 180 / Math.PI; }
+
+    function haversineDistance(a, b) {
+      const R = 6371e3;
+      const φ1 = toRad(a.lat), φ2 = toRad(b.lat);
+      const Δφ = toRad(b.lat - a.lat), Δλ = toRad(b.lon - a.lon);
+      const sa = Math.sin(Δφ/2)**2 + Math.cos(φ1)*Math.cos(φ2)*Math.sin(Δλ/2)**2;
+      const c = 2 * Math.atan2(Math.sqrt(sa), Math.sqrt(1-sa));
+      return R * c;
+    }
+
+    function calculateBearing(from, to) {
+      const φ1 = toRad(from.lat), φ2 = toRad(to.lat);
+      const Δλ = toRad(to.lon - from.lon);
+      const y = Math.sin(Δλ) * Math.cos(φ2);
+      const x = Math.cos(φ1)*Math.sin(φ2) - Math.sin(φ1)*Math.cos(φ2)*Math.cos(Δλ);
+      let θ = Math.atan2(y, x);
+      θ = (toDeg(θ) + 360) % 360;
+      return θ;
+    }
+
+    function lowPassFilter(newValue, oldValue, factor) {
+      if (oldValue === null) return newValue;
+      let diff = newValue - oldValue;
+      if (diff > 180) diff -= 360;
+      if (diff < -180) diff += 360;
+      return (oldValue + diff * factor + 360) % 360;
+    }
+
+    function getCardinalDirection(bearing) {
+      const directions = ['N', 'NE', 'E', 'SE', 'S', 'SW', 'W', 'NW'];
+      const index = Math.round(bearing / 45) % 8;
+      return directions[index];
+    }
+    
+    // --------------------------------------------------------------------------
+    // ---------- Compass Sensor Logic -------------
+    // --------------------------------------------------------------------------
+    
+    function setHeading(h) {
+      userHeading = lowPassFilter(h, userHeading, SMOOTHING_FACTOR);
+      const display = Math.round(userHeading);
+      headingEl.textContent = `Heading: ${display}°`;
+      rose.style.transform = `rotate(${ -userHeading + calibrationOffset }deg)`;
+      updateDisplay();
+    }
+    
+    async function startMagnetometer() {
+      if (!('Magnetometer' in window)) {
+        warnEl.textContent = 'Magnetometer not supported in this browser.';
+        return;
+      }
+      try {
+        if (navigator.permissions) {
+          try {
+            const p = await navigator.permissions.query({ name: 'magnetometer' });
+            if (p.state === 'denied') {
+              warnEl.textContent = 'Magnetometer permission denied.';
+              return;
+            }
+          } catch (e) {}
+        }
+        magSensor = new Magnetometer({ frequency: 20 });
+        magSensor.addEventListener('reading', () => {
+          const { x, y } = magSensor;
+          let heading = Math.atan2(y, x) * (180 / Math.PI);
+          heading = (heading + 360) % 360;
+          heading = (heading + 90) % 360;
+          setHeading(heading);
+          warnEl.textContent = '';
+        });
+        magSensor.addEventListener('error', (e) => {
+          warnEl.textContent = 'Magnetometer error: ' + (e.error && e.error.name ? e.error.name : e.message || e);
+        });
+        magSensor.start();
+        useMagnetometer = true;
+        warnEl.textContent = 'Using Magnetometer.';
+      } catch (err) {
+        warnEl.textContent = 'Could not start magnetometer: ' + (err.message || err);
+      }
+    }
+
+    function handleOrientation(e) {
+      if (typeof e.alpha !== 'number') {
+        warnEl.textContent = 'Device orientation not available.';
+        return;
+      }
+      let alpha = e.alpha;
+      let heading = (360 - alpha) % 360;
+      const orientation = (screen.orientation && screen.orientation.angle) || window.orientation || 0;
+      heading = (heading + orientation) % 360;
+      setHeading(heading);
+    }
+    
+    async function requestOrientationPermission() {
+      try {
+        if (typeof DeviceMotionEvent !== 'undefined' && typeof DeviceMotionEvent.requestPermission === 'function') {
+          const state = await DeviceMotionEvent.requestPermission();
+          if (state !== 'granted') {
+            warnEl.textContent = 'Permission for device motion/orientation not granted.';
+            return;
+          }
+        } else if (typeof DeviceOrientationEvent !== 'undefined' && typeof DeviceOrientationEvent.requestPermission === 'function') {
+          const resp = await DeviceOrientationEvent.requestPermission();
+          if (resp !== 'granted') {
+            warnEl.textContent = 'Permission for device motion/orientation not granted.';
+            return;
+          }
+        }
+        window.addEventListener('deviceorientation', handleOrientation, true);
+        warnEl.textContent = 'Using DeviceOrientation events.';
+      } catch (err) {
+        warnEl.textContent = 'DeviceOrientation permission error: ' + (err.message || err);
+      }
+    }
+    
+    // UI wiring
+    permBtn.addEventListener('click', async () => {
+      await requestOrientationPermission();
+    });
+
+    magBtn.addEventListener('click', async () => {
+      await startMagnetometer();
+    });
+
+    calBtn.addEventListener('click', () => {
+      const value = userHeading;
+      if (!isFinite(value)) {
+        warnEl.textContent = 'No heading available to calibrate yet.';
+        return;
+      }
+      calibrationOffset = value;
+      warnEl.textContent = 'Calibration saved (current heading treated as North).';
+      setTimeout(()=> warnEl.textContent = '', 2400);
+    });
+
+    // Auto-attach listeners
+    if ('ondeviceorientationabsolute' in window) {
+      window.addEventListener('deviceorientationabsolute', handleOrientation, true);
+    } else if ('ondeviceorientation' in window) {
+      window.addEventListener('deviceorientation', handleOrientation, true);
+    } else {
+      warnEl.textContent = 'No orientation or magnetometer sensor available in this browser.';
+    }
+
+    window.addEventListener('pagehide', () => {
+      if (magSensor && typeof magSensor.stop === 'function') magSensor.stop();
+      window.removeEventListener('deviceorientation', handleOrientation);
+      window.removeEventListener('deviceorientationabsolute', handleOrientation);
+    });
+
+    // --------------------------------------------------------------------------
+    // ---------- CSV Loading and Parsing Logic -------------
+    // --------------------------------------------------------------------------
+    
+    async function loadCSV() {
+      listStatus.textContent = 'Loading species data...';
+      try {
+        const response = await fetch(CSV_URL);
+        if (!response.ok) throw new Error('CSV fetch failed with status: ' + response.status);
+        const text = await response.text();
+        const parsed = Papa.parse(text, { header: false, skipEmptyLines: true });
+        speciesData = parsed.data
+          .map((row) => {
+            if (!row || row.length < 4 || !row[0] || !row[3]) return null;
+            const name = String(row[0]).trim();
+            const coord = String(row[3]).trim();
+            let lat, lon;
+            if (coord.includes(',')) {
+              [lat, lon] = coord.split(',').map(s => Number(s.trim()));
+            } else if (coord.includes(';')) {
+              [lat, lon] = coord.split(';').map(s => Number(s.trim()));
+            } else {
+              const parts = coord.split(/\s+/).map(s => s.trim()).filter(Boolean);
+              [lat, lon] = parts.map(Number);
+            }
+            if (isFinite(lat) && isFinite(lon)) {
+              return { speciesName: name, lat: lat, lon: lon };
+            }
+            return null;
+          })
+          .filter(Boolean);
+        if (speciesData.length === 0) {
+          listStatus.textContent = 'No valid species-with-coordinates found in CSV.';
+        } else {
+          listStatus.textContent = '';
+          renderList(speciesData);
+        }
+      } catch (err) {
+        console.error(err);
+        listStatus.textContent = 'Failed to load CSV.';
+      }
+    }
+
+    // --------------------------------------------------------------------------
+    // ---------- UI Rendering and Search Logic -------------
+    // --------------------------------------------------------------------------
+
+    function renderList(entries, userCoords) {
+      listEl.innerHTML = '';
+      if (!entries || entries.length === 0) {
+        listEl.innerHTML = `<p class="p-4 text-center text-gray-300">No species found.</p>`;
+        return;
+      }
+      
+      const grouped = {};
+      entries.forEach(e => {
+        (grouped[e.speciesName] ??= []).push(e);
+      });
+      
+      Object.keys(grouped).sort((a, b) => a.localeCompare(b)).forEach(name => {
+        const wrapper = document.createElement('div');
+        wrapper.className = 'p-2 rounded hover:bg-gray-600 cursor-pointer species-list-item';
+        
+        let displayContent = `${name} (${grouped[name].length} sighting${grouped[name].length > 1 ? 's' : ''})`;
+        let subContent = '';
+        
+        // Find the closest sighting if user's location is known
+        if (userCoords && userCoords.lat !== null && userCoords.lon !== null) {
+          const sortedGroup = grouped[name].sort((a, b) => {
+            const distA = haversineDistance(userCoords, a);
+            const distB = haversineDistance(userCoords, b);
+            return distA - distB;
+          });
+          const closest = sortedGroup[0];
+          const distance = haversineDistance(userCoords, closest);
+          const bearing = calculateBearing(userCoords, closest);
+          const direction = getCardinalDirection(bearing);
+          
+          subContent = `
+            <div class="species-list-coords">
+              ${distance.toFixed(0)}m ${direction} &bull; Lat: ${closest.lat.toFixed(4)}, Lon: ${closest.lon.toFixed(4)}
+            </div>
+          `;
+        }
+
+        wrapper.innerHTML = `
+          <div>${displayContent}</div>
+          ${subContent}
+        `;
+
+        wrapper.onclick = () => {
+          currentSearchTerm = name;
+          searchInput.value = name;
+          listEl.innerHTML = '';
+        };
+        
+        listEl.appendChild(wrapper);
+      });
+    }
+
+    searchInput.addEventListener('input', (e) => {
+      const query = e.target.value.trim().toLowerCase();
+      currentSearchTerm = query === '' ? '' : query;
+      if (!query) {
+        renderList(speciesData, userCoords);
+        return;
+      }
+      const filtered = speciesData.filter(s => s.speciesName.toLowerCase().includes(query));
+      const names = [...new Map(filtered.map(s => [s.speciesName, s])).values()];
+      if (names.length === 0) {
+        listEl.innerHTML = `<p class="p-4 text-center text-gray-300">No species match “${query}”.</p>`;
+      } else {
+        listEl.innerHTML = '';
+        names.forEach(s => {
+          const item = document.createElement('div');
+          item.className = 'p-2 rounded hover:bg-gray-600 cursor-pointer';
+          item.textContent = s.speciesName;
+          item.onclick = () => {
+            currentSearchTerm = s.speciesName;
+            searchInput.value = s.speciesName;
+            listEl.innerHTML = '';
+          };
+          listEl.appendChild(item);
+        });
+      }
+    });
+
+    document.addEventListener('click', (e) => {
+      if (!listEl.contains(e.target) && !searchInput.contains(e.target)) {
+        if (currentSearchTerm) listEl.innerHTML = '';
+      } else {
+        if (listEl.children.length === 0) renderList(speciesData, userCoords);
+      }
+    });
+
+    // --------------------------------------------------------------------------
+    // ---------- Compass and AR Marker Rendering Logic -------------
+    // --------------------------------------------------------------------------
+
+    function updateDisplay() {
+      if (userCoords.lat === null || userCoords.lon === null || userHeading === null) {
+        // Only update the display once we have all the required data
+        return;
+      }
+
+      // Re-render the species list with updated distance and direction info
+      renderList(speciesData, userCoords);
+      
+      let candidates = speciesData;
+      if (currentSearchTerm && currentSearchTerm !== '') {
+        const searchLower = currentSearchTerm.toLowerCase();
+        candidates = speciesData.filter(s => s.speciesName.toLowerCase() === searchLower || s.speciesName.toLowerCase().includes(searchLower));
+      }
+
+      const enriched = candidates.map(t => {
+        const distance = haversineDistance(userCoords, t);
+        const bearing = calculateBearing(userCoords, { lat: t.lat, lon: t.lon });
+        return { ...t, distance, bearing };
+      });
+      
+      const targets = enriched.sort((a,b)=>a.distance-b.distance).slice(0, 3);
+      
+      compassArrows.innerHTML = '';
+      
+      // Clear all existing 3D models from the scene
+      const modelsToDeactivate = new Set(activeModels.keys());
+      let hasNearbyModels = false;
+      
+      targets.forEach((target, i) => {
+        const relativeBearing = (target.bearing - userHeading + calibrationOffset + 360) % 360;
+        
+        // Show 3D models for very close sightings
+        if (target.distance <= 10 && loadedModelUrls[target.speciesName]) {
+            getAndDisplayModel(target, relativeBearing, target.distance);
+            modelsToDeactivate.delete(target.speciesName);
+            hasNearbyModels = true;
+        } else {
+            // Otherwise, show 2D compass arrows
+            const arrowWrapper = document.createElement('div');
+            arrowWrapper.className = 'arrow-container';
+            arrowWrapper.style.transform = `rotate(${relativeBearing}deg)`;
+            
+            const arrowHead = document.createElement('div');
+            arrowHead.className = 'species-arrow';
+            
+            const label = document.createElement('div');
+            label.className = 'ar-label';
+            label.textContent = `${target.speciesName} (${Math.round(target.distance)}m)`;
+            label.style.transform = `translateX(-50%) translateY(-50px) rotate(${ -relativeBearing }deg)`;
+            label.style.pointerEvents = 'auto';
+            
+            arrowWrapper.appendChild(arrowHead);
+            arrowWrapper.appendChild(label);
+            compassArrows.appendChild(arrowWrapper);
+        }
+      });
+      
+      // Remove models that are no longer active
+      modelsToDeactivate.forEach(speciesName => {
+        const model = activeModels.get(speciesName);
+        if (model) {
+            scene.remove(model);
+            activeModels.delete(speciesName);
+        }
+      });
+
+      arCanvas.style.display = hasNearbyModels ? 'block' : 'none';
+
+      if (targets.length === 0) {
+        statusEl.textContent = currentSearchTerm ? `No sightings found for “${currentSearchTerm}” nearby.` : 'No sightings within 100m.';
+      } else {
+        if (currentSearchTerm) {
+          statusEl.textContent = `Showing ${targets.length} closest sighting(s) for “${currentSearchTerm}”.`;
+        } else {
+          statusEl.textContent = `Showing ${targets.length} nearby sighting(s) within 100m.`;
+        }
+      }
+    }
+
+    // --------------------------------------------------------------------------
+    // ---------- Sensor and Camera Initialization -------------
+    // --------------------------------------------------------------------------
+
+    async function initCamera() {
+      try {
+        const s = await navigator.mediaDevices.getUserMedia({ video: { facingMode: 'environment' }, audio: false });
+        cameraFeed.srcObject = s;
+      } catch (err) {
+        console.warn('Camera not available:', err);
+      }
+    }
+
+    function initGeolocation() {
+      if (!navigator.geolocation) {
+        coordsEl.textContent = 'Geolocation not supported';
+        return;
+      }
+      navigator.geolocation.watchPosition(pos => {
+        userCoords.lat = pos.coords.latitude;
+        userCoords.lon = pos.coords.longitude;
+        coordsEl.textContent = `Lat: ${userCoords.lat.toFixed(6)}, Lon: ${userCoords.lon.toFixed(6)}`;
+        updateDisplay();
+      }, err => {
+        console.warn('Geolocation error', err);
+        coordsEl.textContent = 'Geolocation denied';
+      }, { enableHighAccuracy: true, maximumAge: 2000, timeout: 10000 });
+    }
+
+    (async function init() {
+      await loadVoxelModels();
+      await loadCSV();
+      await initCamera();
+      initGeolocation();
+      init3DScene();
+    })();
+  </script>
+</body>
+</html>
