@@ -1,0 +1,316 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Voxel JSON Viewer with Textures</title>
+<script async src="https://unpkg.com/es-module-shims@1.6.3/dist/es-module-shims.js"></script>
+<script type="importmap">
+{
+  "imports": {
+    "three": "https://cdn.jsdelivr.net/npm/three@0.128.0/build/three.module.js",
+    "three/addons/": "https://cdn.jsdelivr.net/npm/three@0.128.0/examples/jsm/"
+  }
+}
+</script>
+<script src="https://cdn.tailwindcss.com"></script>
+<style>
+body { margin:0; overflow:hidden; font-family: 'Inter', sans-serif; background:#e2e8f0; color:#1a202c; display:flex; flex-direction:column; align-items:center; justify-content:center; height:100vh; }
+canvas { display:block; }
+.ui-container { position:absolute; top:1rem; right:1rem; padding:0.75rem 1.5rem; background:rgba(255,255,255,0.8); backdrop-filter:blur(10px); border-radius:1rem; box-shadow:0 4px 6px rgba(0,0,0,0.1); display:flex; flex-direction:column; gap:1rem; max-width:300px; transition: all 0.5s ease-in-out; }
+.ui-container.collapsed { max-height:5rem; padding-bottom:0.5rem; }
+.header { display:flex; justify-content:space-between; align-items:center; cursor:pointer; }
+.header h1 { margin:0; font-size:1.5rem; font-weight:700; color:#166534; }
+.collapse-button { background:none; border:none; font-size:1.5rem; cursor:pointer; color:#166534; transition: transform 0.5s ease-in-out; }
+.collapse-button.rotated { transform: rotate(180deg); }
+.ui-content { display:flex; flex-direction:column; gap:1rem; overflow:hidden; transition: max-height 0.5s ease-in-out; }
+.ui-container.collapsed .ui-content { max-height:0; padding:0; }
+.file-input-container { display:flex; flex-direction:column; align-items:center; gap:1rem; }
+#fileInput { border:2px dashed #4a5568; padding:0.75rem; border-radius:0.5rem; cursor:pointer; background:#f7fafc; }
+#loadButton, #voxelizeButton, #downloadButton { background:#4caf50; color:white; padding:0.75rem 1.5rem; border-radius:9999px; font-weight:bold; transition: background-color 0.3s, transform 0.3s; }
+#loadButton:hover, #voxelizeButton:hover, #downloadButton:hover { background:#38a169; transform:scale(1.05); }
+#loadButton:disabled, #voxelizeButton:disabled, #downloadButton:disabled { background:#a0aec0; cursor:not-allowed; transform:none; }
+.slider-container { display:flex; flex-direction:column; align-items:center; gap:0.5rem; }
+#loadingMessage { position:absolute; top:50%; left:50%; transform:translate(-50%,-50%); background:rgba(0,0,0,0.7); color:white; padding:1rem 2rem; border-radius:1rem; box-shadow:0 4px 6px rgba(0,0,0,0.2); z-index:1000; display:none; }
+</style>
+</head>
+<body>
+
+<div class="ui-container" id="uiContainer">
+  <div class="header">
+    <h1 id="uiTitle">Voxel JSON Viewer</h1>
+    <button id="collapseButton" class="collapse-button">▼</button>
+  </div>
+  <div class="ui-content" id="uiContent">
+    <p>Upload a JSON file to see your voxel model.</p>
+    <div class="file-input-container">
+      <input type="file" id="fileInput" accept=".json">
+      <button id="loadButton">Load Model</button>
+    </div>
+    <div id="voxelizeControls" class="slider-container" style="display: none;">
+      <p>Voxel Size: <span id="voxelSizeLabel">20</span></p>
+      <input type="range" id="voxelSizeSlider" min="1" max="50" value="20">
+      <button id="voxelizeButton">Voxelize</button>
+      <button id="downloadButton" style="display:none;">Download Voxel Model</button>
+    </div>
+  </div>
+</div>
+
+<div id="loadingMessage">Voxelizing model...</div>
+
+<script type="module">
+import * as THREE from 'three';
+import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
+
+const scene = new THREE.Scene();
+const camera = new THREE.PerspectiveCamera(75, window.innerWidth/window.innerHeight, 0.1, 1000);
+const renderer = new THREE.WebGLRenderer({alpha:true, antialias:true});
+renderer.setSize(window.innerWidth, window.innerHeight);
+document.body.appendChild(renderer.domElement);
+
+scene.background = null;
+
+const ambientLight = new THREE.AmbientLight(0xffffff, 0.5);
+scene.add(ambientLight);
+const directionalLight = new THREE.DirectionalLight(0xffffff, 0.8);
+directionalLight.position.set(5,5,5);
+scene.add(directionalLight);
+
+const controls = new OrbitControls(camera, renderer.domElement);
+controls.enableDamping = true;
+controls.dampingFactor = 0.25;
+controls.screenSpacePanning = false;
+controls.maxPolarAngle = Math.PI/2;
+
+let currentModel = null;
+let voxelizedModel = null;
+const loader = new THREE.ObjectLoader();
+
+// UI
+const uiContainer = document.getElementById('uiContainer');
+const collapseButton = document.getElementById('collapseButton');
+const fileInput = document.getElementById('fileInput');
+const loadButton = document.getElementById('loadButton');
+const voxelizeControls = document.getElementById('voxelizeControls');
+const voxelSizeSlider = document.getElementById('voxelSizeSlider');
+const voxelSizeLabel = document.getElementById('voxelSizeLabel');
+const voxelizeButton = document.getElementById('voxelizeButton');
+const downloadButton = document.getElementById('downloadButton');
+const loadingMessage = document.getElementById('loadingMessage');
+
+loadButton.disabled=false;
+voxelizeButton.disabled=true;
+downloadButton.disabled=true;
+
+collapseButton.addEventListener('click',()=>{
+  uiContainer.classList.toggle('collapsed');
+  collapseButton.classList.toggle('rotated');
+});
+
+function loadModel(jsonData){
+  if(currentModel){
+    scene.remove(currentModel);
+    currentModel.traverse(c=>{
+      if(c.geometry) c.geometry.dispose();
+      if(c.material) c.material.dispose();
+    });
+    currentModel = null;
+  }
+  
+  // Also clear the voxelized model if a new original model is loaded.
+  if(voxelizedModel) {
+    scene.remove(voxelizedModel);
+    voxelizedModel.traverse(c => {
+        if(c.geometry) c.geometry.dispose();
+        if(c.material) c.material.dispose();
+    });
+    voxelizedModel = null;
+  }
+  
+  downloadButton.style.display = 'none';
+
+  try{
+    const object = loader.parse(JSON.parse(jsonData));
+    scene.add(object);
+    currentModel = object;
+
+    object.traverse(c=>{
+      if(c.isMesh) c.geometry.computeBoundingBox();
+    });
+
+    const boundingBox = new THREE.Box3().setFromObject(object);
+    const center = boundingBox.getCenter(new THREE.Vector3());
+    object.position.sub(center);
+
+    const size = boundingBox.getSize(new THREE.Vector3());
+    const maxDim = Math.max(size.x,size.y,size.z);
+    const fov = camera.fov*(Math.PI/180);
+    let distance = Math.abs(maxDim/2/Math.tan(fov/2))*1.5;
+    camera.position.set(center.x,center.y,distance);
+    camera.lookAt(center);
+    controls.target.copy(center);
+    controls.update();
+
+    voxelizeControls.style.display='flex';
+    voxelizeButton.disabled=false;
+    downloadButton.disabled=true;
+
+  }catch(err){ console.error("Failed to load JSON:",err);}
+}
+
+function voxelizeModel(){
+  if(!currentModel) return;
+  
+  // Remove existing voxelized model if it exists
+  if(voxelizedModel){
+    scene.remove(voxelizedModel);
+    voxelizedModel.traverse(c=>{
+        if(c.geometry) c.geometry.dispose();
+        if(c.material) c.material.dispose();
+    });
+    voxelizedModel = null;
+  }
+
+  loadingMessage.style.display='block';
+
+  setTimeout(()=>{
+    const resolution = parseInt(voxelSizeSlider.value,10);
+    const boundingBox = new THREE.Box3().setFromObject(currentModel);
+    const size = new THREE.Vector3();
+    boundingBox.getSize(size);
+    const voxelSize = Math.max(size.x,size.y,size.z)/resolution;
+
+    // Hide the original model before voxelization
+    currentModel.visible = false;
+    
+    const voxelGroup = new THREE.Group();
+    const modelBBox = new THREE.Box3().setFromObject(currentModel);
+    const startPoint = modelBBox.min.clone();
+    const voxelMap = new Map();
+
+    const canvas = document.createElement('canvas');
+    const ctx = canvas.getContext('2d');
+
+    currentModel.traverse(child=>{
+      if(child.isMesh){
+        const geometry = child.geometry;
+        const posAttr = geometry.attributes.position;
+        const colorAttr = geometry.attributes.color;
+        const uvAttr = geometry.attributes.uv;
+        const material = child.material;
+
+        let textureImage=null;
+        if(material.map && material.map.image){
+          textureImage = material.map.image;
+          canvas.width=textureImage.width;
+          canvas.height=textureImage.height;
+          ctx.drawImage(textureImage,0,0);
+        }
+
+        for(let i=0;i<posAttr.count;i++){
+          const localPos = new THREE.Vector3().fromBufferAttribute(posAttr,i);
+          const worldPos = child.localToWorld(localPos.clone());
+          let voxelColor = new THREE.Color(0xcccccc);
+
+          if(textureImage && uvAttr){
+            const uv = new THREE.Vector2().fromBufferAttribute(uvAttr,i);
+            const x = Math.floor(uv.x * textureImage.width);
+            const y = Math.floor((1-uv.y) * textureImage.height);
+            const data = ctx.getImageData(x,y,1,1).data;
+            voxelColor.setRGB(data[0]/255,data[1]/255,data[2]/255);
+          } else if(colorAttr){
+            voxelColor.fromBufferAttribute(colorAttr,i);
+          } else if(material.color){
+            voxelColor.copy(material.color);
+          }
+
+          const vx=Math.floor((worldPos.x-startPoint.x)/voxelSize);
+          const vy=Math.floor((worldPos.y-startPoint.y)/voxelSize);
+          const vz=Math.floor((worldPos.z-startPoint.z)/voxelSize);
+          const key=`${vx}_${vy}_${vz}`;
+
+          if(!voxelMap.has(key)){
+            const voxelGeo = new THREE.BoxGeometry(voxelSize,voxelSize,voxelSize);
+            const voxelMat = new THREE.MeshLambertMaterial({color:voxelColor});
+            const voxel = new THREE.Mesh(voxelGeo, voxelMat);
+            voxel.position.set(
+              startPoint.x + vx*voxelSize + voxelSize/2,
+              startPoint.y + vy*voxelSize + voxelSize/2,
+              startPoint.z + vz*voxelSize + voxelSize/2
+            );
+            voxelGroup.add(voxel);
+            voxelMap.set(key,true);
+          }
+        }
+      }
+    });
+
+    scene.add(voxelGroup);
+    voxelizedModel = voxelGroup;
+    
+    // Re-center and adjust camera for the new voxelized model
+    const newBBox = new THREE.Box3().setFromObject(voxelizedModel);
+    const newCenter = newBBox.getCenter(new THREE.Vector3());
+    voxelizedModel.position.sub(newCenter);
+
+    const newSize = newBBox.getSize(new THREE.Vector3());
+    const newMaxDim = Math.max(newSize.x,newSize.y,newSize.z);
+    const newDistance = Math.abs(newMaxDim/2/Math.tan(camera.fov*(Math.PI/180)/2))*1.5;
+
+    camera.position.set(newCenter.x,newCenter.y,newDistance);
+    camera.lookAt(newCenter);
+    controls.target.copy(newCenter);
+    controls.update();
+
+    loadingMessage.style.display='none';
+    downloadButton.style.display = 'block';
+    downloadButton.disabled = false;
+  },10);
+}
+
+// Function to download the voxelized model as JSON
+function downloadVoxelModel() {
+    if (!voxelizedModel) {
+        console.error("No voxelized model to download.");
+        return;
+    }
+
+    // Fixed the issue: The toJSON() method belongs to THREE.Object3D, not THREE.ObjectLoader.
+    // We can call it directly on the voxelized model group.
+    const jsonString = JSON.stringify(voxelizedModel.toJSON(), null, 2);
+    
+    const blob = new Blob([jsonString], { type: 'application/json' });
+    const url = URL.createObjectURL(blob);
+    
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = 'voxelized_model.json';
+    document.body.appendChild(a);
+    a.click();
+    
+    document.body.removeChild(a);
+    URL.revokeObjectURL(url);
+}
+
+// UI events
+fileInput.addEventListener('change',()=>{ loadButton.disabled=fileInput.files.length===0; });
+loadButton.addEventListener('click',()=>{
+  const file=fileInput.files[0];
+  if(file){
+    const reader=new FileReader();
+    reader.onload=e=>loadModel(e.target.result);
+    reader.onerror=e=>console.error("Failed to read file:",e);
+    reader.readAsText(file);
+  }
+});
+voxelSizeSlider.addEventListener('input',()=>{ voxelSizeLabel.textContent=voxelSizeSlider.value; });
+voxelizeButton.addEventListener('click', voxelizeModel);
+downloadButton.addEventListener('click', downloadVoxelModel);
+
+function animate(){ requestAnimationFrame(animate); controls.update(); renderer.render(scene,camera); }
+window.addEventListener('resize',()=>{ camera.aspect=window.innerWidth/window.innerHeight; camera.updateProjectionMatrix(); renderer.setSize(window.innerWidth,window.innerHeight); });
+window.onload = animate;
+</script>
+
+</body>
+</html>
