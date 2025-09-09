@@ -1,0 +1,415 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Voxel JSON Viewer (v2)</title>
+    <script async src="https://unpkg.com/es-module-shims@1.6.3/dist/es-module-shims.js"></script>
+    <script type="importmap">
+        {
+            "imports": {
+                "three": "https://cdn.jsdelivr.net/npm/three@0.128.0/build/three.module.js",
+                "three/addons/": "https://cdn.jsdelivr.net/npm/three@0.128.0/examples/jsm/"
+            }
+        }
+    </script>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <style>
+        body {
+            font-family: 'Inter', sans-serif;
+            margin: 0;
+            overflow: hidden;
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            justify-content: center;
+            background-color: #e2e8f0;
+            color: #1a202c;
+            height: 100vh;
+        }
+        canvas {
+            display: block;
+        }
+        .ui-container {
+            position: absolute;
+            top: 1rem;
+            right: 1rem;
+            padding: 0.75rem 1.5rem;
+            background-color: rgba(255, 255, 255, 0.8);
+            backdrop-filter: blur(10px);
+            border-radius: 1rem;
+            box-shadow: 0 4px 6px rgba(0, 0, 0, 0.1);
+            display: flex;
+            flex-direction: column;
+            gap: 1rem;
+            transition: all 0.5s ease-in-out;
+            max-width: 300px;
+        }
+        .ui-container.collapsed {
+            max-height: 5rem;
+            padding-bottom: 0.5rem;
+        }
+        .header {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            cursor: pointer;
+        }
+        .header h1 {
+            margin: 0;
+            font-size: 1.5rem;
+            font-weight: 700;
+            color: #166534;
+        }
+        .header p {
+            margin: 0;
+            font-size: 0.875rem;
+            color: #4a5568;
+        }
+        .collapse-button {
+            background: none;
+            border: none;
+            font-size: 1.5rem;
+            cursor: pointer;
+            color: #166534;
+            transition: transform 0.5s ease-in-out;
+        }
+        .collapse-button.rotated {
+            transform: rotate(180deg);
+        }
+        .ui-content {
+            display: flex;
+            flex-direction: column;
+            gap: 1rem;
+            overflow: hidden;
+            transition: max-height 0.5s ease-in-out;
+        }
+        .ui-container.collapsed .ui-content {
+            max-height: 0;
+            padding: 0;
+        }
+        .file-input-container {
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            gap: 1rem;
+        }
+        #fileInput {
+            border: 2px dashed #4a5568;
+            padding: 0.75rem;
+            border-radius: 0.5rem;
+            cursor: pointer;
+            background-color: #f7fafc;
+        }
+        #loadButton, #voxelizeButton {
+            background-color: #4caf50;
+            color: white;
+            padding: 0.75rem 1.5rem;
+            border-radius: 9999px;
+            font-weight: bold;
+            transition: background-color 0.3s, transform 0.3s;
+        }
+        #loadButton:hover, #voxelizeButton:hover {
+            background-color: #38a169;
+            transform: scale(1.05);
+        }
+        #loadButton:disabled, #voxelizeButton:disabled {
+            background-color: #a0aec0;
+            cursor: not-allowed;
+            transform: none;
+        }
+        .slider-container {
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            gap: 0.5rem;
+        }
+        #loadingMessage {
+            position: absolute;
+            top: 50%;
+            left: 50%;
+            transform: translate(-50%, -50%);
+            background-color: rgba(0, 0, 0, 0.7);
+            color: white;
+            padding: 1rem 2rem;
+            border-radius: 1rem;
+            box-shadow: 0 4px 6px rgba(0, 0, 0, 0.2);
+            z-index: 1000;
+            display: none;
+        }
+    </style>
+</head>
+<body>
+    <div class="ui-container" id="uiContainer">
+        <div class="header">
+            <h1 id="uiTitle">Voxel JSON Viewer</h1>
+            <button id="collapseButton" class="collapse-button">▼</button>
+        </div>
+        <div class="ui-content" id="uiContent">
+            <p>Upload a JSON file to see your voxel model.</p>
+            <div class="file-input-container">
+                <input type="file" id="fileInput" accept=".json">
+                <button id="loadButton">Load Model</button>
+            </div>
+            <div id="voxelizeControls" class="slider-container" style="display: none;">
+                <p>Voxel Size: <span id="voxelSizeLabel">20</span></p>
+                <input type="range" id="voxelSizeSlider" min="1" max="50" value="20">
+                <button id="voxelizeButton">Voxelize</button>
+            </div>
+        </div>
+    </div>
+    
+    <div id="loadingMessage">
+        Voxelizing model...
+    </div>
+    
+    <script type="module">
+        import * as THREE from 'three';
+        import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
+
+        // Set up the scene, camera, and renderer
+        const scene = new THREE.Scene();
+        const camera = new THREE.PerspectiveCamera(75, window.innerWidth / window.innerHeight, 0.1, 1000);
+        const renderer = new THREE.WebGLRenderer({ alpha: true, antialias: true });
+        renderer.setSize(window.innerWidth, window.innerHeight);
+        document.body.appendChild(renderer.domElement);
+
+        scene.background = null;
+
+        // Add lights to the scene for visibility
+        const ambientLight = new THREE.AmbientLight(0xffffff, 0.5);
+        scene.add(ambientLight);
+
+        const directionalLight = new THREE.DirectionalLight(0xffffff, 0.8);
+        directionalLight.position.set(5, 5, 5);
+        scene.add(directionalLight);
+        
+        // Add OrbitControls for interactive camera movement
+        const controls = new OrbitControls(camera, renderer.domElement);
+        controls.enableDamping = true;
+        controls.dampingFactor = 0.25;
+        controls.screenSpacePanning = false;
+        controls.maxPolarAngle = Math.PI / 2;
+        
+        let currentModel = null;
+        const loader = new THREE.ObjectLoader();
+        
+        // UI elements
+        const uiContainer = document.getElementById('uiContainer');
+        const collapseButton = document.getElementById('collapseButton');
+        const fileInput = document.getElementById('fileInput');
+        const loadButton = document.getElementById('loadButton');
+        const voxelizeControls = document.getElementById('voxelizeControls');
+        const voxelSizeSlider = document.getElementById('voxelSizeSlider');
+        const voxelSizeLabel = document.getElementById('voxelSizeLabel');
+        const voxelizeButton = document.getElementById('voxelizeButton');
+        const loadingMessage = document.getElementById('loadingMessage');
+
+        // Set initial state for controls
+        loadButton.disabled = false;
+        voxelizeButton.disabled = true;
+        
+        // Event listener for collapsing the UI
+        collapseButton.addEventListener('click', () => {
+            uiContainer.classList.toggle('collapsed');
+            collapseButton.classList.toggle('rotated');
+        });
+
+        /**
+         * Loads a JSON file as a Three.js object and adds it to the scene.
+         * @param {string} jsonData - The JSON data as a string.
+         */
+        function loadModel(jsonData) {
+            // Remove previous model if it exists
+            if (currentModel) {
+                scene.remove(currentModel);
+                currentModel.traverse(child => {
+                    if (child.geometry) child.geometry.dispose();
+                    if (child.material) child.material.dispose();
+                });
+                currentModel = null;
+            }
+
+            try {
+                const object = loader.parse(JSON.parse(jsonData));
+                scene.add(object);
+                currentModel = object;
+                
+                // Set the current model for the voxelizer
+                currentModel.traverse((child) => {
+                    if (child.isMesh) {
+                        child.geometry.computeBoundingBox();
+                    }
+                });
+
+                // Center the entire model and adjust camera
+                const boundingBox = new THREE.Box3().setFromObject(object);
+                const center = boundingBox.getCenter(new THREE.Vector3());
+                object.position.sub(center);
+
+                const size = boundingBox.getSize(new THREE.Vector3());
+                const maxDim = Math.max(size.x, size.y, size.z);
+                const fov = camera.fov * (Math.PI / 180);
+                let distance = Math.abs(maxDim / 2 / Math.tan(fov / 2));
+                distance *= 1.5;
+                camera.position.set(center.x, center.y, distance);
+                camera.lookAt(center);
+                controls.target.copy(center);
+                controls.update();
+
+                // Enable voxelize controls
+                voxelizeControls.style.display = 'flex';
+                voxelizeButton.disabled = false;
+
+            } catch (error) {
+                console.error('Failed to parse or load the JSON object:', error);
+            }
+        }
+        
+        /**
+         * Voxelizes the current model based on the slider value.
+         */
+        function voxelizeModel() {
+            if (!currentModel) {
+                console.error("No model to voxelize.");
+                return;
+            }
+            
+            loadingMessage.style.display = 'block';
+
+            // Use a timeout to allow the UI to update with the loading message
+            setTimeout(() => {
+                const resolution = parseInt(voxelSizeSlider.value, 10);
+                const boundingBox = new THREE.Box3().setFromObject(currentModel);
+                const size = new THREE.Vector3();
+                boundingBox.getSize(size);
+                
+                const voxelSize = size.y / resolution;
+                
+                // Clear the scene
+                scene.remove(currentModel);
+                
+                const voxelGroup = new THREE.Group();
+                const tempPosition = new THREE.Vector3();
+
+                // Voxelization logic: Iterate through a grid and check for intersections.
+                // This is a computationally heavy process.
+                const raycaster = new THREE.Raycaster();
+                const direction = new THREE.Vector3(0, 0, 1);
+                
+                const modelBBox = new THREE.Box3().setFromObject(currentModel);
+                const modelSize = modelBBox.getSize(new THREE.Vector3());
+                const startPoint = modelBBox.min.clone();
+
+                // Create a temporary geometry and material for the voxels
+                const voxelGeometry = new THREE.BoxGeometry(voxelSize, voxelSize, voxelSize);
+
+                for (let x = 0; x <= modelSize.x; x += voxelSize) {
+                    for (let y = 0; y <= modelSize.y; y += voxelSize) {
+                        for (let z = 0; z <= modelSize.z; z += voxelSize) {
+                            tempPosition.set(startPoint.x + x + voxelSize / 2, startPoint.y + y + voxelSize / 2, startPoint.z + z + voxelSize / 2);
+                            raycaster.set(tempPosition, direction);
+                            const intersects = raycaster.intersectObject(currentModel, true);
+
+                            // Simple check: if a ray from a point hits the model, it's inside
+                            if (intersects.length > 0) {
+                                // Get the color of the intersected face
+                                let materialColor = new THREE.Color(0xcccccc);
+                                if (intersects[0].face && intersects[0].object.material) {
+                                    if (Array.isArray(intersects[0].object.material)) {
+                                        const materialIndex = intersects[0].face.materialIndex;
+                                        if (intersects[0].object.material[materialIndex].color) {
+                                            materialColor = intersects[0].object.material[materialIndex].color;
+                                        }
+                                    } else {
+                                        if (intersects[0].object.material.color) {
+                                            materialColor = intersects[0].object.material.color;
+                                        }
+                                    }
+                                }
+
+                                const voxelMaterial = new THREE.MeshLambertMaterial({ color: materialColor });
+                                const voxel = new THREE.Mesh(voxelGeometry, voxelMaterial);
+                                voxel.position.copy(tempPosition);
+                                voxelGroup.add(voxel);
+                            }
+                        }
+                    }
+                }
+                
+                // Clean up the temporary geometry/material
+                voxelGeometry.dispose();
+
+                // Replace the model
+                scene.add(voxelGroup);
+                currentModel = voxelGroup;
+                
+                // Re-center and adjust camera
+                const newBBox = new THREE.Box3().setFromObject(currentModel);
+                const newCenter = newBBox.getCenter(new THREE.Vector3());
+                currentModel.position.sub(newCenter);
+                
+                const newSize = newBBox.getSize(new THREE.Vector3());
+                const newMaxDim = Math.max(newSize.x, newSize.y, newSize.z);
+                const newDistance = Math.abs(newMaxDim / 2 / Math.tan(camera.fov * (Math.PI / 180) / 2)) * 1.5;
+                
+                camera.position.set(newCenter.x, newCenter.y, newDistance);
+                camera.lookAt(newCenter);
+                controls.target.copy(newCenter);
+                controls.update();
+                
+                loadingMessage.style.display = 'none';
+
+            }, 10);
+        }
+
+        // Event Listeners
+        fileInput.addEventListener('change', () => {
+            if (fileInput.files.length > 0) {
+                loadButton.disabled = false;
+            } else {
+                loadButton.disabled = true;
+            }
+        });
+
+        loadButton.addEventListener('click', () => {
+            const file = fileInput.files[0];
+            if (file) {
+                const reader = new FileReader();
+                reader.onload = (e) => {
+                    loadModel(e.target.result);
+                };
+                reader.onerror = (e) => {
+                    console.error('Failed to read file:', e);
+                };
+                reader.readAsText(file);
+            }
+        });
+
+        voxelSizeSlider.addEventListener('input', () => {
+            voxelSizeLabel.textContent = voxelSizeSlider.value;
+        });
+
+        voxelizeButton.addEventListener('click', voxelizeModel);
+
+        // Animation loop
+        const animate = function () {
+            requestAnimationFrame(animate);
+            controls.update();
+            renderer.render(scene, camera);
+        };
+
+        // Handle window resizing
+        window.addEventListener('resize', () => {
+            camera.aspect = window.innerWidth / window.innerHeight;
+            camera.updateProjectionMatrix();
+            renderer.setSize(window.innerWidth, window.innerHeight);
+        });
+
+        // Start the animation loop
+        window.onload = function () {
+            animate();
+        }
+    </script>
+</body>
+</html>
