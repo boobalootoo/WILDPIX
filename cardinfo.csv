@@ -9,14 +9,14 @@ Common Blue Butterfly,,,
 Common Crab Spider,,,
 Common Darter Dragonfly,,,
 Common Fox Spider,,,
-Common Frog,,," 50.803354, -0.044775"
+Common Frog,,https://github.com/boobalootoo/WILDPIX/blob/main/BLOX3DVIEWER/JSON/commonfrogvox.json," 50.803354, -0.044775"
 Common Lizard,,,
 Common Toad,,," 50.803356, -0.044775"
 Death Cap Mushroom,,,
 Devils Coach Horse,,,
 European Adder,,,
 European Garden Spider,,,
-False Black Widow Spider,,," 50.803355, -0.044775"
+False Black Widow Spider,https://github.com/boobalootoo/WILDPIX/blob/main/BLOX3DVIEWER/JSON/falseblackwidow.json,https://github.com/boobalootoo/WILDPIX/blob/main/BLOX3DVIEWER/JSON/falseblackwidowvox.json," 50.803355, -0.044775"
 Fen Raft Spider,,,
 Fly Agaric Mushroom,,,
 Grass Snake,,,
@@ -63,7 +63,7 @@ Barn Owl,,,
 Bearded Tit,,,
 Black Guillemot,,,
 Black Redstart,,,
-Blackcap,,," 50.803356, -0.044776"
+Blackcap,https://github.com/boobalootoo/WILDPIX/blob/main/BLOX3DVIEWER/JSON/blackcap.json,https://github.com/boobalootoo/WILDPIX/blob/main/BLOX3DVIEWER/JSON/blackcapvox.json," 50.803356, -0.044776"
 Black-headed Gull,,,
 Black-throated Thrush,,,
 Blue Tit,,,
