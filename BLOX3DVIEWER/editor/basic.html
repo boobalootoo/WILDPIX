@@ -1,0 +1,498 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Voxel Model Editor</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
+    <style>
+        body {
+            font-family: 'Inter', sans-serif;
+            background-color: #f3f4f6;
+            color: #1f2937;
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            flex-direction: column;
+            min-height: 100vh;
+            padding: 20px;
+        }
+
+        .container {
+            background-color: #ffffff;
+            border-radius: 1rem;
+            box-shadow: 0 10px 15px -3px rgba(0, 0, 0, 0.1), 0 4px 6px -2px rgba(0, 0, 0, 0.05);
+            padding: 2.5rem;
+            width: 100%;
+            max-width: 1200px;
+        }
+
+        .controls {
+            display: grid;
+            grid-template-columns: repeat(1, minmax(0, 1fr));
+            gap: 1.5rem;
+            margin-bottom: 2rem;
+        }
+
+        @media (min-width: 768px) {
+            .controls {
+                grid-template-columns: repeat(2, minmax(0, 1fr));
+            }
+        }
+
+        .controls-group {
+            background-color: #f9fafb;
+            border-radius: 0.75rem;
+            padding: 1.5rem;
+            border: 1px solid #e5e7eb;
+        }
+
+        .canvas-container {
+            width: 100%;
+            height: 600px;
+            border-radius: 1rem;
+            overflow: hidden;
+            border: 1px solid #e5e7eb;
+        }
+
+        canvas {
+            display: block;
+        }
+
+        .btn {
+            background-color: #3b82f6;
+            color: white;
+            padding: 0.75rem 1.5rem;
+            border-radius: 0.5rem;
+            font-weight: 600;
+            transition: background-color 0.2s;
+        }
+
+        .btn:hover {
+            background-color: #2563eb;
+        }
+
+        .input-group label {
+            font-weight: 500;
+            color: #4b5563;
+        }
+
+        .input-group input[type="file"],
+        .input-group input[type="number"],
+        .input-group input[type="color"] {
+            margin-top: 0.5rem;
+            display: block;
+            width: 100%;
+            padding: 0.5rem;
+            border-radius: 0.5rem;
+            border: 1px solid #d1d5db;
+        }
+
+        .btn-green {
+            background-color: #10b981;
+        }
+
+        .btn-green:hover {
+            background-color: #059669;
+        }
+
+        .btn-red {
+            background-color: #ef4444;
+        }
+
+        .btn-red:hover {
+            background-color: #dc2626;
+        }
+
+        .message-box {
+            position: fixed;
+            top: 50%;
+            left: 50%;
+            transform: translate(-50%, -50%);
+            background-color: #fff;
+            padding: 2rem;
+            border-radius: 1rem;
+            box-shadow: 0 20px 25px -5px rgba(0, 0, 0, 0.1), 0 8px 10px -6px rgba(0, 0, 0, 0.1);
+            z-index: 1000;
+            text-align: center;
+        }
+    </style>
+</head>
+<body class="bg-gray-100 min-h-screen flex flex-col items-center justify-center p-5">
+
+    <div id="message-box" class="hidden message-box">
+        <p id="message-text" class="text-lg text-gray-800"></p>
+        <button onclick="hideMessage()" class="mt-4 px-4 py-2 bg-blue-500 text-white rounded-lg">OK</button>
+    </div>
+
+    <div class="container">
+        <h1 class="text-3xl font-bold text-center mb-6">Voxel Model Editor</h1>
+        <p class="text-center text-gray-600 mb-8">Convert 2D images into 3D voxel models and edit them in your browser.</p>
+
+        <div class="controls">
+            <!-- Image & Conversion Controls -->
+            <div class="controls-group">
+                <h2 class="text-xl font-semibold mb-4">Image to Voxel</h2>
+                <div class="input-group mb-4">
+                    <label for="imageUpload" class="block">Upload Image</label>
+                    <input type="file" id="imageUpload" accept="image/*" class="mt-1">
+                </div>
+                <div class="input-group mb-4">
+                    <label for="voxelSize" class="block">Voxel Density</label>
+                    <input type="number" id="voxelSize" value="16" min="1" max="64" class="mt-1">
+                    <p class="text-sm text-gray-500 mt-1">Lower is more dense, max 64.</p>
+                </div>
+                <button id="convertBtn" class="btn w-full">Convert to Voxels</button>
+            </div>
+
+            <!-- Editing Tools -->
+            <div class="controls-group">
+                <h2 class="text-xl font-semibold mb-4">Editing Tools</h2>
+                <div class="input-group mb-4">
+                    <label for="backgroundColor" class="block">Background Color to Remove</label>
+                    <input type="color" id="backgroundColor" value="#FFFFFF" class="mt-1 w-full h-12">
+                </div>
+                <button id="deleteBackgroundBtn" class="btn btn-red w-full mb-4">Delete Background Voxels</button>
+                <button id="downloadBtn" class="btn btn-green w-full">Download as JSON</button>
+            </div>
+        </div>
+
+        <div id="canvas-container" class="canvas-container"></div>
+    </div>
+
+    <script>
+        // Global variables for Three.js
+        let scene, camera, renderer, controls;
+        let voxels = []; // Stores all voxel meshes and their data
+        let modelGroup = new THREE.Group();
+        let selectedVoxel = null;
+        let isMouseDown = false;
+        let mouse = new THREE.Vector2();
+        let raycaster = new THREE.Raycaster();
+        let currentMouseX = 0, currentMouseY = 0;
+        let previousMouseX = 0, previousMouseY = 0;
+        let isDragging = false;
+        let isRotationEnabled = true;
+
+        // UI elements
+        const imageUpload = document.getElementById('imageUpload');
+        const voxelSizeInput = document.getElementById('voxelSize');
+        const convertBtn = document.getElementById('convertBtn');
+        const deleteBackgroundBtn = document.getElementById('deleteBackgroundBtn');
+        const backgroundColorInput = document.getElementById('backgroundColor');
+        const downloadBtn = document.getElementById('downloadBtn');
+        const canvasContainer = document.getElementById('canvas-container');
+        const messageBox = document.getElementById('message-box');
+        const messageText = document.getElementById('message-text');
+
+        function showMessage(message) {
+            messageText.textContent = message;
+            messageBox.classList.remove('hidden');
+        }
+
+        function hideMessage() {
+            messageBox.classList.add('hidden');
+        }
+
+        function init() {
+            // Scene setup
+            scene = new THREE.Scene();
+            scene.background = new THREE.Color(0xf0f0f0);
+
+            // Camera setup
+            camera = new THREE.PerspectiveCamera(75, canvasContainer.clientWidth / canvasContainer.clientHeight, 0.1, 1000);
+            camera.position.z = 50;
+            camera.position.y = 20;
+            camera.position.x = 20;
+            camera.lookAt(new THREE.Vector3(0, 0, 0));
+
+            // Renderer setup
+            renderer = new THREE.WebGLRenderer({ antialias: true });
+            renderer.setSize(canvasContainer.clientWidth, canvasContainer.clientHeight);
+            canvasContainer.appendChild(renderer.domElement);
+
+            // Lighting
+            const ambientLight = new THREE.AmbientLight(0xffffff, 0.5);
+            scene.add(ambientLight);
+            const directionalLight = new THREE.DirectionalLight(0xffffff, 0.5);
+            directionalLight.position.set(100, 100, 100);
+            scene.add(directionalLight);
+
+            // Add the model group to the scene
+            scene.add(modelGroup);
+
+            // Event listeners
+            window.addEventListener('resize', onWindowResize, false);
+            renderer.domElement.addEventListener('mousedown', onDocumentMouseDown, false);
+            renderer.domElement.addEventListener('mouseup', onDocumentMouseUp, false);
+            renderer.domElement.addEventListener('mousemove', onDocumentMouseMove, false);
+            renderer.domElement.addEventListener('touchstart', onDocumentTouchStart, false);
+            renderer.domElement.addEventListener('touchend', onDocumentTouchEnd, false);
+            renderer.domElement.addEventListener('touchmove', onDocumentTouchMove, false);
+        }
+
+        function onWindowResize() {
+            camera.aspect = canvasContainer.clientWidth / canvasContainer.clientHeight;
+            camera.updateProjectionMatrix();
+            renderer.setSize(canvasContainer.clientWidth, canvasContainer.clientHeight);
+        }
+
+        function onDocumentMouseDown(event) {
+            event.preventDefault();
+            isMouseDown = true;
+            previousMouseX = event.clientX;
+            previousMouseY = event.clientY;
+
+            // Check for voxel selection
+            mouse.x = (event.clientX / renderer.domElement.clientWidth) * 2 - 1;
+            mouse.y = -(event.clientY / renderer.domElement.clientHeight) * 2 + 1;
+            raycaster.setFromCamera(mouse, camera);
+
+            const intersects = raycaster.intersectObjects(modelGroup.children);
+            if (intersects.length > 0) {
+                selectedVoxel = intersects[0].object;
+            } else {
+                selectedVoxel = null;
+            }
+        }
+
+        function onDocumentMouseUp(event) {
+            event.preventDefault();
+            isMouseDown = false;
+            if (!isDragging && selectedVoxel) {
+                // Click event, delete voxel
+                deleteVoxel(selectedVoxel);
+            }
+            isDragging = false;
+        }
+
+        function onDocumentMouseMove(event) {
+            if (!isMouseDown) return;
+
+            const deltaX = event.clientX - previousMouseX;
+            const deltaY = event.clientY - previousMouseY;
+
+            if (Math.abs(deltaX) > 1 || Math.abs(deltaY) > 1) {
+                isDragging = true;
+            }
+
+            if (isDragging && isRotationEnabled) {
+                modelGroup.rotation.y += deltaX * 0.01;
+                modelGroup.rotation.x += deltaY * 0.01;
+            }
+
+            previousMouseX = event.clientX;
+            previousMouseY = event.clientY;
+        }
+
+        function onDocumentTouchStart(event) {
+            event.preventDefault();
+            const touch = event.touches[0];
+            previousMouseX = touch.clientX;
+            previousMouseY = touch.clientY;
+            isDragging = false;
+
+            // Check for voxel selection
+            mouse.x = (touch.clientX / renderer.domElement.clientWidth) * 2 - 1;
+            mouse.y = -(touch.clientY / renderer.domElement.clientHeight) * 2 + 1;
+            raycaster.setFromCamera(mouse, camera);
+
+            const intersects = raycaster.intersectObjects(modelGroup.children);
+            if (intersects.length > 0) {
+                selectedVoxel = intersects[0].object;
+            } else {
+                selectedVoxel = null;
+            }
+        }
+
+        function onDocumentTouchEnd(event) {
+            if (!isDragging && selectedVoxel) {
+                deleteVoxel(selectedVoxel);
+            }
+            isDragging = false;
+        }
+
+        function onDocumentTouchMove(event) {
+            const touch = event.touches[0];
+            const deltaX = touch.clientX - previousMouseX;
+            const deltaY = touch.clientY - previousMouseY;
+            if (Math.abs(deltaX) > 1 || Math.abs(deltaY) > 1) {
+                isDragging = true;
+            }
+
+            if (isDragging && isRotationEnabled) {
+                modelGroup.rotation.y += deltaX * 0.01;
+                modelGroup.rotation.x += deltaY * 0.01;
+            }
+
+            previousMouseX = touch.clientX;
+            previousMouseY = touch.clientY;
+        }
+
+        function deleteVoxel(voxel) {
+            // Remove the voxel mesh from the scene and dispose of its geometry/material
+            modelGroup.remove(voxel);
+            voxel.geometry.dispose();
+            voxel.material.dispose();
+
+            // Find and remove the corresponding data from the voxels array
+            const index = voxels.findIndex(v => v.x === voxel.position.x && v.y === voxel.position.y && v.z === voxel.position.z);
+            if (index !== -1) {
+                voxels.splice(index, 1);
+            }
+        }
+
+        function animate() {
+            requestAnimationFrame(animate);
+            renderer.render(scene, camera);
+        }
+
+        function colorDistance(c1, c2) {
+            const rDiff = c1.r - c2.r;
+            const gDiff = c1.g - c2.g;
+            const bDiff = c1.b - c2.b;
+            return Math.sqrt(rDiff * rDiff + gDiff * gDiff + bDiff * bDiff);
+        }
+
+        async function createVoxelsFromImage(image) {
+            showMessage("Converting image to voxels...");
+            // Clear existing model
+            modelGroup.clear();
+            voxels = [];
+
+            const voxelDensity = parseInt(voxelSizeInput.value, 10) || 16;
+            const size = 64;
+            const scaleFactor = size / voxelDensity;
+            const gridSize = voxelDensity;
+
+            const canvas = document.createElement('canvas');
+            canvas.width = gridSize;
+            canvas.height = gridSize;
+            const ctx = canvas.getContext('2d');
+            ctx.drawImage(image, 0, 0, gridSize, gridSize);
+            const imageData = ctx.getImageData(0, 0, gridSize, gridSize);
+            const data = imageData.data;
+
+            const tempVoxels = [];
+            for (let y = 0; y < gridSize; y++) {
+                for (let x = 0; x < gridSize; x++) {
+                    const i = (y * gridSize + x) * 4;
+                    const r = data[i] / 255;
+                    const g = data[i + 1] / 255;
+                    const b = data[i + 2] / 255;
+
+                    tempVoxels.push({
+                        r: r,
+                        g: g,
+                        b: b,
+                        x: x - gridSize / 2,
+                        y: (gridSize - 1 - y) - gridSize / 2,
+                        z: 0
+                    });
+                }
+            }
+
+            // Create 3D geometry from 2D image data (single layer)
+            const voxelGeometry = new THREE.BoxGeometry(scaleFactor, scaleFactor, scaleFactor);
+            tempVoxels.forEach(voxel => {
+                const material = new THREE.MeshLambertMaterial({ color: new THREE.Color(voxel.r, voxel.g, voxel.b) });
+                const mesh = new THREE.Mesh(voxelGeometry, material);
+                mesh.position.set(voxel.x * scaleFactor, voxel.y * scaleFactor, voxel.z * scaleFactor);
+                mesh.userData.color = { r: voxel.r, g: voxel.g, b: voxel.b };
+                modelGroup.add(mesh);
+                voxels.push({
+                    x: mesh.position.x,
+                    y: mesh.position.y,
+                    z: mesh.position.z,
+                    color: mesh.userData.color
+                });
+            });
+
+            // Center the model group
+            const box = new THREE.Box3().setFromObject(modelGroup);
+            const center = box.getCenter(new THREE.Vector3());
+            modelGroup.position.sub(center);
+
+            showMessage("Conversion complete! Click on voxels to delete them.");
+            animate();
+        }
+
+        // Event Listeners for UI
+        convertBtn.addEventListener('click', () => {
+            const file = imageUpload.files[0];
+            if (!file) {
+                showMessage("Please select an image first.");
+                return;
+            }
+            const reader = new FileReader();
+            reader.onload = (e) => {
+                const img = new Image();
+                img.onload = () => createVoxelsFromImage(img);
+                img.src = e.target.result;
+            };
+            reader.readAsDataURL(file);
+        });
+
+        deleteBackgroundBtn.addEventListener('click', () => {
+            if (voxels.length === 0) {
+                showMessage("No model to edit. Please convert an image first.");
+                return;
+            }
+            showMessage("Deleting background voxels...");
+            const hexColor = backgroundColorInput.value.substring(1);
+            const r = parseInt(hexColor.substring(0, 2), 16) / 255;
+            const g = parseInt(hexColor.substring(2, 4), 16) / 255;
+            const b = parseInt(hexColor.substring(4, 6), 16) / 255;
+
+            const backgroundColor = { r: r, g: g, b: b };
+
+            // Filter out voxels that are too close in color to the background
+            const voxelsToRemove = [];
+            modelGroup.children.forEach(voxelMesh => {
+                const voxelColor = voxelMesh.userData.color;
+                // Use a custom color distance calculation
+                if (colorDistance(voxelColor, backgroundColor) < 0.2) {
+                    voxelsToRemove.push(voxelMesh);
+                }
+            });
+
+            voxelsToRemove.forEach(mesh => {
+                deleteVoxel(mesh);
+            });
+
+            showMessage("Background deletion complete!");
+        });
+
+        downloadBtn.addEventListener('click', () => {
+            if (voxels.length === 0) {
+                showMessage("No model to download. Please convert an image first.");
+                return;
+            }
+
+            const modelData = {
+                voxels: voxels.map(v => ({
+                    x: v.x,
+                    y: v.y,
+                    z: v.z,
+                    color: v.color
+                }))
+            };
+            const dataStr = "data:text/json;charset=utf-8," + encodeURIComponent(JSON.stringify(modelData, null, 2));
+            const downloadAnchorNode = document.createElement('a');
+            downloadAnchorNode.setAttribute("href", dataStr);
+            downloadAnchorNode.setAttribute("download", "voxel_model.json");
+            document.body.appendChild(downloadAnchorNode);
+            downloadAnchorNode.click();
+            downloadAnchorNode.remove();
+            showMessage("Model downloaded as voxel_model.json");
+        });
+
+        window.onload = function() {
+            init();
+            animate();
+        };
+
+    </script>
+</body>
+</html>
