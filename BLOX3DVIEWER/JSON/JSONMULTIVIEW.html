@@ -1,0 +1,122 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Voxel Model Viewer</title>
+  <script async src="https://unpkg.com/es-module-shims@1.6.3/dist/es-module-shims.js"></script>
+  <script type="importmap">
+  {
+    "imports": {
+      "three": "https://cdn.jsdelivr.net/npm/three@0.128.0/build/three.module.js",
+      "three/addons/": "https://cdn.jsdelivr.net/npm/three@0.128.0/examples/jsm/"
+    }
+  }
+  </script>
+  <style>
+    body { margin:0; overflow:hidden; font-family:sans-serif; }
+    #ui { position:absolute; top:1rem; left:1rem; background:rgba(255,255,255,0.9); padding:1rem; border-radius:0.5rem; }
+    select, button { padding:0.25rem; margin-right:0.5rem; }
+  </style>
+</head>
+<body>
+  <div id="ui">
+    <select id="fileSelect"></select>
+    <button id="loadBtn">Load</button>
+  </div>
+  <script type="module">
+    import * as THREE from 'three';
+    import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
+
+    const scene = new THREE.Scene();
+    scene.background = new THREE.Color(0xf0f0f0);
+
+    const camera = new THREE.PerspectiveCamera(60, window.innerWidth/window.innerHeight, 0.1, 5000);
+    camera.position.set(50, 50, 100);
+
+    const renderer = new THREE.WebGLRenderer({antialias:true});
+    renderer.setSize(window.innerWidth, window.innerHeight);
+    document.body.appendChild(renderer.domElement);
+
+    const controls = new OrbitControls(camera, renderer.domElement);
+    controls.enableDamping = true;
+
+    scene.add(new THREE.AmbientLight(0xffffff, 0.6));
+    const dirLight = new THREE.DirectionalLight(0xffffff, 0.8);
+    dirLight.position.set(100, 200, 150);
+    scene.add(dirLight);
+
+    let currentModel = null;
+
+    async function loadModel(url) {
+      try {
+        const res = await fetch(url);
+        const json = await res.json();
+
+        const loader = new THREE.ObjectLoader();
+        const obj = loader.parse(json);
+
+        if (currentModel) scene.remove(currentModel);
+        currentModel = obj;
+        scene.add(currentModel);
+
+        // center + fit camera
+        const box = new THREE.Box3().setFromObject(currentModel);
+        const center = box.getCenter(new THREE.Vector3());
+        const size = box.getSize(new THREE.Vector3()).length();
+        currentModel.position.sub(center);
+
+        camera.position.set(0, 0, size * 1.5);
+        controls.target.set(0, 0, 0);
+        controls.update();
+
+      } catch (err) {
+        alert("Error loading model: " + err);
+      }
+    }
+
+    async function loadFileList() {
+      const apiURL = "https://api.github.com/repos/boobalootoo/WILDPIX/contents/BLOX3DVIEWER/JSON";
+      try {
+        const res = await fetch(apiURL);
+        const files = await res.json();
+        const select = document.getElementById("fileSelect");
+
+        files.filter(f => f.name.endsWith(".json")).forEach(f => {
+          const opt = document.createElement("option");
+          opt.value = f.download_url;
+          opt.textContent = f.name;
+          select.appendChild(opt);
+        });
+
+        if (select.options.length > 0) {
+          select.selectedIndex = 0;
+          loadModel(select.value);
+        }
+      } catch (err) {
+        alert("Failed to load file list: " + err);
+      }
+    }
+
+    document.getElementById("loadBtn").addEventListener("click", () => {
+      const url = document.getElementById("fileSelect").value;
+      loadModel(url);
+    });
+
+    window.addEventListener("resize", () => {
+      camera.aspect = window.innerWidth / window.innerHeight;
+      camera.updateProjectionMatrix();
+      renderer.setSize(window.innerWidth, window.innerHeight);
+    });
+
+    function animate() {
+      requestAnimationFrame(animate);
+      controls.update();
+      renderer.render(scene, camera);
+    }
+    animate();
+
+    loadFileList();
+  </script>
+</body>
+</html>
