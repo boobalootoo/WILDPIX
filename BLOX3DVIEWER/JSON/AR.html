@@ -1,0 +1,169 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>AR Voxel Viewer</title>
+  <script async src="https://unpkg.com/es-module-shims@1.6.3/dist/es-module-shims.js"></script>
+  <script type="importmap">
+  {
+    "imports": {
+      "three": "https://cdn.jsdelivr.net/npm/three@0.128.0/build/three.module.js",
+      "three/addons/": "https://cdn.jsdelivr.net/npm/three@0.128.0/examples/jsm/"
+    }
+  }
+  </script>
+  <style>
+    body { margin:0; overflow:hidden; font-family:sans-serif; }
+    video#cameraFeed {
+      position: fixed;
+      top:0; left:0;
+      width:100%; height:100%;
+      object-fit: cover;
+      z-index:-1;
+    }
+    canvas {
+      position: fixed;
+      top:0; left:0;
+      width:100%; height:100%;
+    }
+    #ui {
+      position: absolute;
+      top: 1rem;
+      left: 1rem;
+      background: rgba(255,255,255,0.9);
+      padding: 1rem;
+      border-radius: 0.5rem;
+      max-width: 300px;
+    }
+    #info {
+      margin-top: 0.5rem;
+      font-size: 0.85rem;
+      line-height: 1.2rem;
+      color: #333;
+    }
+    select, button {
+      padding: 0.25rem;
+      margin: 0.25rem 0;
+      width: 100%;
+    }
+  </style>
+</head>
+<body>
+  <video id="cameraFeed" autoplay playsinline></video>
+  <div id="ui">
+    <select id="fileSelect"></select>
+    <button id="loadBtn">Load Model</button>
+    <div id="info">
+      <strong>Instructions:</strong><br>
+      • Pinch with two fingers to resize the model.<br>
+      • Drag with one finger to move it.<br>
+      • Rotate with two fingers to spin it.<br>
+      • Use the dropdown to pick a model.<br>
+    </div>
+  </div>
+  <script type="module">
+    import * as THREE from 'three';
+    import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
+
+    // Camera feed setup
+    const video = document.getElementById('cameraFeed');
+    async function startCamera() {
+      try {
+        const stream = await navigator.mediaDevices.getUserMedia({ video: { facingMode: "environment" } });
+        video.srcObject = stream;
+      } catch (err) {
+        alert("Unable to access camera: " + err);
+      }
+    }
+    startCamera();
+
+    // Three.js setup
+    const scene = new THREE.Scene();
+    const camera = new THREE.PerspectiveCamera(60, window.innerWidth/window.innerHeight, 0.1, 5000);
+    camera.position.set(0, 0, 100);
+
+    const renderer = new THREE.WebGLRenderer({ alpha: true, antialias: true });
+    renderer.setSize(window.innerWidth, window.innerHeight);
+    document.body.appendChild(renderer.domElement);
+
+    const controls = new OrbitControls(camera, renderer.domElement);
+    controls.enableDamping = true;
+    controls.enablePan = true;
+    controls.enableRotate = true;
+    controls.enableZoom = true;
+
+    scene.add(new THREE.AmbientLight(0xffffff, 0.8));
+    const dir = new THREE.DirectionalLight(0xffffff, 0.5);
+    dir.position.set(50, 100, 50);
+    scene.add(dir);
+
+    let currentModel = null;
+
+    async function loadModel(url) {
+      try {
+        const res = await fetch(url);
+        const json = await res.json();
+        const loader = new THREE.ObjectLoader();
+        const obj = loader.parse(json);
+
+        if (currentModel) scene.remove(currentModel);
+        currentModel = obj;
+        scene.add(currentModel);
+
+        // Normalize model position/scale
+        const box = new THREE.Box3().setFromObject(currentModel);
+        const size = box.getSize(new THREE.Vector3()).length();
+        const center = box.getCenter(new THREE.Vector3());
+        currentModel.position.sub(center);
+        currentModel.scale.setScalar(20 / size); // fit into view
+
+      } catch (err) {
+        alert("Error loading model: " + err);
+      }
+    }
+
+    async function loadFileList() {
+      const apiURL = "https://api.github.com/repos/boobalootoo/WILDPIX/contents/BLOX3DVIEWER/JSON";
+      try {
+        const res = await fetch(apiURL);
+        const files = await res.json();
+        const select = document.getElementById("fileSelect");
+
+        files.filter(f => f.name.endsWith(".json")).forEach(f => {
+          const opt = document.createElement("option");
+          opt.value = f.download_url;
+          opt.textContent = f.name;
+          select.appendChild(opt);
+        });
+
+        if (select.options.length > 0) {
+          select.selectedIndex = 0;
+          loadModel(select.value);
+        }
+      } catch (err) {
+        alert("Failed to load file list: " + err);
+      }
+    }
+
+    document.getElementById("loadBtn").addEventListener("click", () => {
+      loadModel(document.getElementById("fileSelect").value);
+    });
+
+    window.addEventListener("resize", () => {
+      camera.aspect = window.innerWidth/window.innerHeight;
+      camera.updateProjectionMatrix();
+      renderer.setSize(window.innerWidth, window.innerHeight);
+    });
+
+    function animate() {
+      requestAnimationFrame(animate);
+      controls.update();
+      renderer.render(scene, camera);
+    }
+    animate();
+
+    loadFileList();
+  </script>
+</body>
+</html>
