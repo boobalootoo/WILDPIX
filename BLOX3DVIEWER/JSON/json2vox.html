@@ -284,62 +284,79 @@
                 const size = new THREE.Vector3();
                 boundingBox.getSize(size);
                 
-                const voxelSize = size.y / resolution;
+                // Calculate the voxel size based on the model's dimensions and resolution.
+                const voxelSize = Math.max(size.x, size.y, size.z) / resolution;
                 
-                // Clear the scene
+                // Clear the scene and replace with a voxel group
                 scene.remove(currentModel);
                 
                 const voxelGroup = new THREE.Group();
                 const tempPosition = new THREE.Vector3();
-
-                // Voxelization logic: Iterate through a grid and check for intersections.
-                // This is a computationally heavy process.
-                const raycaster = new THREE.Raycaster();
-                const direction = new THREE.Vector3(0, 0, 1);
-                
                 const modelBBox = new THREE.Box3().setFromObject(currentModel);
-                const modelSize = modelBBox.getSize(new THREE.Vector3());
                 const startPoint = modelBBox.min.clone();
+                const modelCenter = modelBBox.getCenter(new THREE.Vector3());
 
-                // Create a temporary geometry and material for the voxels
-                const voxelGeometry = new THREE.BoxGeometry(voxelSize, voxelSize, voxelSize);
+                // Use a map to track voxel positions and colors to avoid duplicates.
+                const voxelMap = new Map();
 
-                for (let x = 0; x <= modelSize.x; x += voxelSize) {
-                    for (let y = 0; y <= modelSize.y; y += voxelSize) {
-                        for (let z = 0; z <= modelSize.z; z += voxelSize) {
-                            tempPosition.set(startPoint.x + x + voxelSize / 2, startPoint.y + y + voxelSize / 2, startPoint.z + z + voxelSize / 2);
-                            raycaster.set(tempPosition, direction);
-                            const intersects = raycaster.intersectObject(currentModel, true);
+                // A much more reliable way to voxelize:
+                // We'll traverse the meshes in the model and create voxels directly on their surfaces.
+                currentModel.traverse(child => {
+                    if (child.isMesh) {
+                        const geometry = child.geometry;
+                        const positionAttribute = geometry.attributes.position;
+                        const material = child.material;
 
-                            // Simple check: if a ray from a point hits the model, it's inside
-                            if (intersects.length > 0) {
-                                // Get the color of the intersected face
-                                let materialColor = new THREE.Color(0xcccccc);
-                                if (intersects[0].face && intersects[0].object.material) {
-                                    if (Array.isArray(intersects[0].object.material)) {
-                                        const materialIndex = intersects[0].face.materialIndex;
-                                        if (intersects[0].object.material[materialIndex].color) {
-                                            materialColor = intersects[0].object.material[materialIndex].color;
-                                        }
-                                    } else {
-                                        if (intersects[0].object.material.color) {
-                                            materialColor = intersects[0].object.material.color;
+                        for (let i = 0; i < positionAttribute.count; i++) {
+                            // Get the vertex position in the model's local space
+                            const localPosition = new THREE.Vector3().fromBufferAttribute(positionAttribute, i);
+                            
+                            // Convert to world space
+                            const worldPosition = child.localToWorld(localPosition.clone());
+                            
+                            // Get the color of the face or material
+                            let materialColor = new THREE.Color(0xcccccc);
+                            if (material) {
+                                if (Array.isArray(material)) {
+                                    // Use the material index if the geometry has a material group
+                                    if (geometry.groups.length > 0) {
+                                        const group = geometry.groups.find(g => i >= g.start && i < g.start + g.count);
+                                        if (group && material[group.materialIndex] && material[group.materialIndex].color) {
+                                            materialColor = material[group.materialIndex].color;
                                         }
                                     }
+                                } else if (material.color) {
+                                    materialColor = material.color;
                                 }
+                            }
 
+                            // Determine the voxel grid coordinates
+                            const voxelX = Math.floor((worldPosition.x - startPoint.x) / voxelSize);
+                            const voxelY = Math.floor((worldPosition.y - startPoint.y) / voxelSize);
+                            const voxelZ = Math.floor((worldPosition.z - startPoint.z) / voxelSize);
+
+                            const voxelKey = `${voxelX}_${voxelY}_${voxelZ}`;
+
+                            // If a voxel doesn't exist at this position, create it and add it to the group
+                            if (!voxelMap.has(voxelKey)) {
                                 const voxelMaterial = new THREE.MeshLambertMaterial({ color: materialColor });
+                                const voxelGeometry = new THREE.BoxGeometry(voxelSize, voxelSize, voxelSize);
                                 const voxel = new THREE.Mesh(voxelGeometry, voxelMaterial);
-                                voxel.position.copy(tempPosition);
+                                
+                                // Position the voxel in the center of the grid cell
+                                voxel.position.set(
+                                    startPoint.x + voxelX * voxelSize + voxelSize / 2,
+                                    startPoint.y + voxelY * voxelSize + voxelSize / 2,
+                                    startPoint.z + voxelZ * voxelSize + voxelSize / 2
+                                );
+                                
                                 voxelGroup.add(voxel);
+                                voxelMap.set(voxelKey, true);
                             }
                         }
                     }
-                }
+                });
                 
-                // Clean up the temporary geometry/material
-                voxelGeometry.dispose();
-
                 // Replace the model
                 scene.add(voxelGroup);
                 currentModel = voxelGroup;
