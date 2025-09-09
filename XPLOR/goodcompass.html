@@ -1,0 +1,289 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width,initial-scale=1" />
+  <title>Simple Compass</title>
+  <style>
+    :root {
+      --bg: #0f172a;
+      --card: #0b1220;
+      --accent: #38bdf8;
+      --muted: #94a3b8;
+    }
+    html,body { height:100%; margin:0; font-family:system-ui,-apple-system,Segoe UI,Roboto,"Helvetica Neue",Arial; background:linear-gradient(180deg,var(--bg),#071027); color:#e6eef8; display:grid; place-items:center; }
+    .card {
+      width: min(420px, 92vw);
+      padding: 20px;
+      border-radius: 14px;
+      background: linear-gradient(180deg, rgba(255,255,255,0.02), rgba(0,0,0,0.12));
+      box-shadow: 0 8px 30px rgba(2,6,23,0.6);
+      text-align: center;
+    }
+    h1 { margin:0 0 10px 0; font-size:1.2rem; }
+    .compass {
+      width: 260px;
+      height: 260px;
+      margin: 18px auto;
+      position: relative;
+      border-radius: 50%;
+      background:
+        radial-gradient(circle at 50% 50%, rgba(255,255,255,0.02), transparent 40%),
+        conic-gradient(from 0deg, rgba(255,255,255,0.02), rgba(255,255,255,0.0));
+      border: 4px solid rgba(255,255,255,0.04);
+      display:flex;
+      align-items:center;
+      justify-content:center;
+      overflow:hidden;
+    }
+    .rose {
+      width: 84%;
+      height: 84%;
+      border-radius:50%;
+      position:relative;
+      transform-origin:center center;
+      transition: transform 120ms linear;
+      display:grid;
+      place-items:center;
+    }
+    /* arrow / needle */
+    .needle {
+      width: 6px;
+      height: 50%;
+      background: linear-gradient(180deg, var(--accent), rgba(56,189,248,0.7));
+      position:absolute;
+      top: 6%;
+      left: 50%;
+      transform-origin: 50% 100%;
+      border-radius: 4px;
+      box-shadow: 0 6px 18px rgba(8,20,34,0.6);
+    }
+    .needle::after {
+      content:"";
+      position:absolute;
+      bottom:-18px;
+      left:50%;
+      transform:translateX(-50%);
+      width:0;height:0;border-left:10px solid transparent;border-right:10px solid transparent;border-top:18px solid var(--accent);
+    }
+    .hub {
+      width: 20px; height: 20px; background: #0b1220; border:3px solid var(--accent); border-radius:50%; z-index:2;
+    }
+    .deg {
+      margin-top:12px;
+      font-weight:600;
+      font-size:1.1rem;
+    }
+    .small { color:var(--muted); font-size:0.85rem; margin-top:6px;}
+    .controls { display:flex; gap:10px; justify-content:center; margin-top:14px; flex-wrap:wrap; }
+    button {
+      background:transparent;
+      color:var(--accent);
+      border:1px solid rgba(56,189,248,0.15);
+      padding:8px 12px;
+      border-radius:8px;
+      cursor:pointer;
+      font-weight:600;
+      backdrop-filter: blur(4px);
+    }
+    .warn { color:#ffd1a3; font-size:0.9rem; margin-top:8px }
+    footer { margin-top:12px; font-size:0.78rem; color:var(--muted) }
+  </style>
+</head>
+<body>
+  <div class="card">
+    <h1>Simple Compass</h1>
+
+    <div class="compass" id="compass">
+      <div class="rose" id="rose" aria-hidden="true">
+        <div class="needle" id="needle"></div>
+        <div class="hub"></div>
+      </div>
+    </div>
+
+    <div class="deg" id="deg">—°</div>
+    <div class="small" id="dir">Waiting for sensors...</div>
+
+    <div class="controls">
+      <button id="permBtn">Allow Motion / Orientation</button>
+      <button id="magBtn">Use Magnetometer (if available)</button>
+      <button id="calBtn">Calibrate Tip</button>
+    </div>
+
+    <div class="warn" id="warn"></div>
+    <footer>
+      Tip: For best results hold the phone flat (screen parallel to the ground) and keep away from metal/phone cases that contain magnets. On iOS you must allow Motion & Orientation permission.
+    </footer>
+  </div>
+
+  <script>
+    // Simple compass: tries Magnetometer -> DeviceOrientationEvent -> fallback
+    const rose = document.getElementById('rose');
+    const degEl = document.getElementById('deg');
+    const dirEl = document.getElementById('dir');
+    const warnEl = document.getElementById('warn');
+    const permBtn = document.getElementById('permBtn');
+    const magBtn = document.getElementById('magBtn');
+    const calBtn = document.getElementById('calBtn');
+
+    let useMagnetometer = false;
+    let magSensor = null;
+    let calibrationOffset = 0; // user calibration in degrees
+
+    function setHeading(h) {
+      // normalize
+      let heading = (h + 360) % 360;
+      const display = Math.round(heading);
+      degEl.textContent = display + '°';
+      dirEl.textContent = headingToCardinal(heading);
+      // rotate rose such that needle points to North; because needle is drawn pointing up,
+      // rotate the rose by the heading (but depending on chosen math we may invert).
+      // We want the arrow to point to north, so rotate the rose by the negative heading.
+      rose.style.transform = `rotate(${ -heading + calibrationOffset }deg)`;
+    }
+
+    function headingToCardinal(deg) {
+      const dirs = ['N','NNE','NE','ENE','E','ESE','SE','SSE','S','SSW','SW','WSW','W','WNW','NW','NNW','N'];
+      return dirs[Math.round(deg/22.5)];
+    }
+
+    // --- Magnetometer approach (Generic Sensor API) ---
+    async function startMagnetometer() {
+      if (!('Magnetometer' in window)) {
+        warnEl.textContent = 'Magnetometer not supported in this browser.';
+        return;
+      }
+      try {
+        // some browsers require "magnetometer" permission via Permissions API
+        if (navigator.permissions) {
+          try {
+            const p = await navigator.permissions.query({ name: 'magnetometer' });
+            if (p.state === 'denied') {
+              warnEl.textContent = 'Magnetometer permission denied.';
+              return;
+            }
+          } catch (e) {
+            // ignore permission query error
+          }
+        }
+
+        magSensor = new Magnetometer({ frequency: 20 });
+        magSensor.addEventListener('reading', () => {
+          // x,y,z axes orientation depends on device — this is a reasonable guess:
+          const { x, y } = magSensor;
+          // heading relative to device axes:
+          let heading = Math.atan2(y, x) * (180 / Math.PI);
+          // convert to 0-360
+          heading = (heading + 360) % 360;
+          // Adjust so 0 = North. Depending on sensor axes you may need to tweak (swap x/y or invert).
+          // We try a common orientation correction:
+          heading = (heading + 90) % 360;
+          setHeading(heading);
+          warnEl.textContent = '';
+        });
+        magSensor.addEventListener('error', (e) => {
+          warnEl.textContent = 'Magnetometer error: ' + (e.error && e.error.name ? e.error.name : e.message || e);
+        });
+        magSensor.start();
+        useMagnetometer = true;
+        warnEl.textContent = 'Using Magnetometer (if heading looks wrong, try Device Orientation method).';
+      } catch (err) {
+        warnEl.textContent = 'Could not start magnetometer: ' + (err.message || err);
+      }
+    }
+
+    // --- DeviceOrientationEvent approach ---
+    function handleOrientation(e) {
+      // The meaning of alpha differs across browsers. This is a best-effort approach.
+      // If e.absolute is true then alpha is measured relative to Earth's coordinate frame.
+      if (typeof e.alpha !== 'number') {
+        warnEl.textContent = 'Device orientation not available.';
+        return;
+      }
+      // Some devices need alpha to be reversed: use (360 - alpha)
+      // We'll use (360 - alpha) because many devices provide rotation clockwise from north.
+      let alpha = e.alpha; // 0..360
+      let heading = (360 - alpha) % 360;
+      // If device is in portrait/landscape, we may need to adjust by screen orientation angle.
+      const orientation = (screen.orientation && screen.orientation.angle) || window.orientation || 0;
+      heading = (heading + orientation) % 360;
+      setHeading(heading);
+    }
+
+    // request permission for iOS 13+ (and some Safari versions)
+    async function requestOrientationPermission() {
+      // Some platforms require a user gesture and explicit permission
+      try {
+        if (typeof DeviceMotionEvent !== 'undefined' && typeof DeviceMotionEvent.requestPermission === 'function') {
+          const state = await DeviceMotionEvent.requestPermission(); // covers motion & orientation in some browsers
+          if (state !== 'granted') {
+            warnEl.textContent = 'Permission for device motion/orientation not granted.';
+            return;
+          }
+        } else if (typeof DeviceOrientationEvent !== 'undefined' && typeof DeviceOrientationEvent.requestPermission === 'function') {
+          const resp = await DeviceOrientationEvent.requestPermission();
+          if (resp !== 'granted') {
+            warnEl.textContent = 'Permission for device motion/orientation not granted.';
+            return;
+          }
+        }
+        // attach listener
+        window.addEventListener('deviceorientation', handleOrientation, true);
+        warnEl.textContent = 'Using DeviceOrientation events.';
+      } catch (err) {
+        warnEl.textContent = 'DeviceOrientation permission error: ' + (err.message || err);
+      }
+    }
+
+    // UI wiring
+    permBtn.addEventListener('click', async () => {
+      // try to request permission and add listener
+      await requestOrientationPermission();
+    });
+
+    magBtn.addEventListener('click', async () => {
+      await startMagnetometer();
+    });
+
+    calBtn.addEventListener('click', () => {
+      // set current heading as zero offset
+      // read current displayed degree if any
+      const value = degEl.textContent.replace('°','').trim();
+      const n = Number(value);
+      if (!isFinite(n)) {
+        warnEl.textContent = 'No heading available to calibrate yet.';
+        return;
+      }
+      // offset so that current heading reads 0
+      calibrationOffset = n;
+      warnEl.textContent = 'Calibration saved (current heading treated as North).';
+      setTimeout(()=> warnEl.textContent = '', 2400);
+    });
+
+    // auto-attach deviceorientation if supported and doesn't require permission:
+    if ('ondeviceorientationabsolute' in window) {
+      window.addEventListener('deviceorientationabsolute', handleOrientation, true);
+    } else if ('ondeviceorientation' in window) {
+      // Some browsers will fire without permission; others require explicit permission.
+      window.addEventListener('deviceorientation', handleOrientation, true);
+    } else {
+      // nothing available: show message
+      warnEl.textContent = 'No orientation or magnetometer sensor available in this browser.';
+      dirEl.textContent = 'Not supported';
+    }
+
+    // cleanup on page hide
+    window.addEventListener('pagehide', () => {
+      if (magSensor && typeof magSensor.stop === 'function') magSensor.stop();
+      window.removeEventListener('deviceorientation', handleOrientation);
+      window.removeEventListener('deviceorientationabsolute', handleOrientation);
+    });
+
+    // Helpful hint for iOS users (permission also must be enabled in Settings > Safari > Motion & Orientation)
+    if (/iPad|iPhone|iPod/.test(navigator.userAgent) && !window.MSStream) {
+      // show small instruction
+      warnEl.textContent = 'iOS: Tap "Allow Motion / Orientation" and enable Motion & Orientation in Settings if needed.';
+    }
+  </script>
+</body>
+</html>
