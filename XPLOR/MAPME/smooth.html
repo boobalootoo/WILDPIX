@@ -1,0 +1,207 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <title>Species Sightings Map</title>
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+
+  <!-- Leaflet CSS -->
+  <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css"/>
+  <link rel="stylesheet" href="https://unpkg.com/leaflet.markercluster@1.5.3/dist/MarkerCluster.css"/>
+  <link rel="stylesheet" href="https://unpkg.com/leaflet.markercluster@1.5.3/dist/MarkerCluster.Default.css"/>
+
+  <style>
+    #map { width: 100%; height: 100vh; }
+    .popup-gallery { text-align: center; }
+    .popup-gallery img { max-width: 150px; border-radius: 8px; }
+    .popup-gallery button {
+      margin: 5px;
+      padding: 4px 8px;
+      border: none;
+      border-radius: 4px;
+      cursor: pointer;
+      background: #0078d7;
+      color: white;
+    }
+    .compass {
+      margin-top: 8px;
+      font-size: 14px;
+      font-weight: bold;
+      color: #222;
+    }
+  </style>
+</head>
+<body>
+  <div id="map"></div>
+
+  <!-- JS libraries -->
+  <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+  <script src="https://unpkg.com/leaflet.markercluster@1.5.3/dist/leaflet.markercluster.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/papaparse@5.4.1/papaparse.min.js"></script>
+
+  <script>
+    // Init map
+    const map = L.map('map').setView([54.5, -3], 6);
+
+    // Satellite basemap
+    L.tileLayer(
+      'https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}', 
+      {
+        attribution: 'Tiles © Esri — Source: Esri, Maxar, Earthstar Geographics',
+        maxNativeZoom: 18,
+        maxZoom: 22
+      }
+    ).addTo(map);
+
+    // Marker cluster group
+    const markers = L.markerClusterGroup();
+    map.addLayer(markers);
+
+    // --- Current location marker ---
+    let locationMarker = null;
+    let currentLocation = null;
+
+    map.locate({ setView: true, maxZoom: 16, watch: true });
+
+    function onLocationFound(e) {
+      currentLocation = e.latlng;
+      if (locationMarker) {
+        locationMarker.setLatLng(e.latlng);
+      } else {
+        locationMarker = L.marker(e.latlng, {
+          icon: L.icon({
+            iconUrl: "https://cdn-icons-png.flaticon.com/512/64/64113.png",
+            iconSize: [28, 28],
+            iconAnchor: [14, 14]
+          })
+        }).addTo(map).bindPopup("📍 You are here");
+      }
+
+      // refresh popups live
+      refreshAllPopups();
+    }
+
+    function onLocationError(e) {
+      console.warn("Location not found: " + e.message);
+    }
+
+    map.on("locationfound", onLocationFound);
+    map.on("locationerror", onLocationError);
+
+    // --- Utility: calculate NS/EW offset ---
+    function calculateOffset(from, to) {
+      if (!from) return "Waiting for GPS...";
+      const R = 6378137; // Earth radius in metres
+
+      const dLat = (to.lat - from.lat) * Math.PI/180;
+      const dLon = (to.lng - from.lng) * Math.PI/180;
+
+      const northMetres = dLat * R; 
+      const eastMetres = dLon * R * Math.cos(from.lat * Math.PI/180);
+
+      const ns = northMetres >= 0 ? "N" : "S";
+      const ew = eastMetres >= 0 ? "E" : "W";
+
+      return `${Math.abs(northMetres).toFixed(1)} m ${ns}, ${Math.abs(eastMetres).toFixed(1)} m ${ew}`;
+    }
+
+    // --- Load CSV ---
+    const csvUrl = "https://raw.githubusercontent.com/boobalootoo/WILDPIX/main/cardinfo.csv";
+
+    Papa.parse(csvUrl, {
+      download: true,
+      header: true,
+      complete: function(results) {
+        const grouped = {};
+
+        results.data.forEach(row => {
+          if (row["example coords"] && row["image"]) {
+            const coords = row["example coords"].trim();
+            const parts = coords.split(",");
+            if (parts.length === 2) {
+              const lat = parseFloat(parts[0].trim());
+              const lon = parseFloat(parts[1].trim());
+
+              if (!isNaN(lat) && !isNaN(lon)) {
+                const key = `${lat},${lon}`;
+                if (!grouped[key]) grouped[key] = [];
+                grouped[key].push({
+                  name: row["Common Name"] || "Unknown species",
+                  image: row["image"],
+                  lat, lon
+                });
+              }
+            }
+          }
+        });
+
+        // Place markers
+        Object.keys(grouped).forEach(key => {
+          const [lat, lon] = key.split(",").map(Number);
+          const entries = grouped[key];
+
+          const icon = L.icon({
+            iconUrl: entries[0].image,
+            iconSize: [40, 40],
+            className: 'species-icon'
+          });
+
+          const marker = L.marker([lat, lon], { icon });
+
+          let index = 0;
+          function getPopupContent() {
+            const e = entries[index];
+            const offsetText = calculateOffset(currentLocation, {lat:e.lat, lng:e.lon});
+            return `
+              <div class="popup-gallery">
+                <strong>${e.name}</strong><br>
+                <img src="${e.image}" alt="${e.name}"><br>
+                <button onclick="prevImage('${key}')">&lt; Prev</button>
+                <button onclick="nextImage('${key}')">Next &gt;</button>
+                <p>${index + 1} / ${entries.length}</p>
+                <div class="compass">📏 ${offsetText}</div>
+              </div>
+            `;
+          }
+
+          marker.bindPopup(getPopupContent);
+
+          marker._galleryData = { entries, index, getPopupContent };
+
+          markers.addLayer(marker);
+        });
+      }
+    });
+
+    // --- Refresh all open popups when location updates ---
+    function refreshAllPopups() {
+      markers.eachLayer(marker => {
+        if (marker._popup && marker.isPopupOpen() && marker._galleryData) {
+          marker.setPopupContent(marker._galleryData.getPopupContent());
+        }
+      });
+    }
+
+    // --- Gallery navigation ---
+    function prevImage(key) {
+      markers.eachLayer(marker => {
+        if (marker._galleryData && marker.getLatLng().toString() === `LatLng(${key})`) {
+          const data = marker._galleryData;
+          data.index = (data.index - 1 + data.entries.length) % data.entries.length;
+          marker.setPopupContent(data.getPopupContent());
+        }
+      });
+    }
+
+    function nextImage(key) {
+      markers.eachLayer(marker => {
+        if (marker._galleryData && marker.getLatLng().toString() === `LatLng(${key})`) {
+          const data = marker._galleryData;
+          data.index = (data.index + 1) % data.entries.length;
+          marker.setPopupContent(data.getPopupContent());
+        }
+      });
+    }
+  </script>
+</body>
+</html>
