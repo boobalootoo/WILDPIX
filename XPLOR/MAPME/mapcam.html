@@ -1,0 +1,380 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <title>Species Sightings Map</title>
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+
+    <!-- Leaflet CSS -->
+    <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css"/>
+    <link rel="stylesheet" href="https://unpkg.com/leaflet.markercluster@1.5.3/dist/MarkerCluster.css"/>
+    <link rel="stylesheet" href="https://unpkg.com/leaflet.markercluster@1.5.3/dist/MarkerCluster.Default.css"/>
+
+    <style>
+        html, body {
+            height: 100%;
+            margin: 0;
+            overflow: hidden;
+            font-family: 'Helvetica Neue', Arial, Helvetica, sans-serif;
+            display: flex;
+            flex-direction: column;
+        }
+        #camera-container {
+            width: 100%;
+            flex-grow: 0;
+            position: relative;
+            background: #222;
+            overflow: hidden;
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            color: #fff;
+            min-height: 50px;
+        }
+        #camera-feed {
+            width: 100%;
+            height: 100%;
+            object-fit: cover;
+        }
+        #drag-handle {
+            position: absolute;
+            bottom: -5px;
+            left: 0;
+            width: 100%;
+            height: 10px;
+            cursor: ns-resize;
+            background: rgba(255, 255, 255, 0.2);
+            z-index: 1000;
+        }
+        #map {
+            width: 100%;
+            flex-grow: 1;
+        }
+
+        /* Existing styles */
+        .popup-gallery { text-align: center; }
+        .popup-gallery img { max-width: 150px; border-radius: 8px; }
+        .popup-gallery button {
+            margin: 5px;
+            padding: 4px 8px;
+            border: none;
+            border-radius: 4px;
+            cursor: pointer;
+            background: #0078d7;
+            color: white;
+        }
+        .compass {
+            margin-top: 8px;
+            font-size: 14px;
+            font-weight: bold;
+            color: #222;
+        }
+        /* New custom marker styles */
+        .my-location-icon {
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            position: relative;
+            width: 50px;
+            height: 50px;
+        }
+        .my-location-icon .smiley {
+            position: absolute;
+            width: 50px;
+            height: 50px;
+            z-index: 1;
+        }
+        .my-location-icon .hands {
+            position: absolute;
+            width: 25px;
+            height: 25px;
+            transform-origin: center bottom;
+            top: -12.5px;
+            z-index: 2;
+        }
+    </style>
+</head>
+<body>
+    <div id="camera-container">
+        <video id="camera-feed" autoplay playsinline></video>
+        <div id="drag-handle"></div>
+    </div>
+    <div id="map"></div>
+
+    <!-- JS libraries -->
+    <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+    <script src="https://unpkg.com/leaflet.markercluster@1.5.3/dist/leaflet.markercluster.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/papaparse@5.4.1/papaparse.min.js"></script>
+
+    <script>
+        // Init map
+        const map = L.map('map').setView([54.5, -3], 6);
+
+        // Satellite basemap
+        L.tileLayer(
+            'https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}', 
+            {
+                attribution: 'Tiles © Esri — Source: Esri, Maxar, Earthstar Geographics',
+                maxNativeZoom: 18,
+                maxZoom: 26 
+            }
+        ).addTo(map);
+
+        // Marker cluster group
+        const markers = L.markerClusterGroup();
+        map.addLayer(markers);
+
+        // --- Current location marker ---
+        let locationMarker = null;
+        let currentLocation = null;
+        let directionHand = null;
+
+        // Custom div icon for the user's location
+        const myLocationIcon = L.divIcon({
+            className: 'my-location-icon',
+            html: `
+                <img class="smiley" src="https://raw.githubusercontent.com/boobalootoo/WILDPIX/main/XPLOR/MAPME/smilez.png" alt="Smiley face">
+                <img class="hands" src="https://raw.githubusercontent.com/boobalootoo/WILDPIX/main/XPLOR/MAPME/hands.png" alt="Directional hand">
+            `,
+            iconSize: [50, 50],
+            iconAnchor: [25, 25],
+            popupAnchor: [0, -25]
+        });
+
+        map.locate({ setView: true, maxZoom: 16, watch: true });
+
+        function onLocationFound(e) {
+            currentLocation = e.latlng;
+            if (locationMarker) {
+                locationMarker.setLatLng(e.latlng);
+            } else {
+                locationMarker = L.marker(e.latlng, {
+                    icon: myLocationIcon
+                }).addTo(map).bindPopup("📍 You are here");
+                directionHand = locationMarker._icon.querySelector('.hands');
+            }
+
+            refreshAllPopups();
+        }
+
+        function onLocationError(e) {
+            console.warn("Location not found: " + e.message);
+        }
+
+        map.on("locationfound", onLocationFound);
+        map.on("locationerror", onLocationError);
+
+        // --- Device orientation for compass ---
+        window.addEventListener('deviceorientation', function(e) {
+            if (e.webkitCompassHeading) {
+                // iOS
+                const heading = e.webkitCompassHeading;
+                if (directionHand) {
+                    directionHand.style.transform = `rotate(${90 - heading}deg)`;
+                }
+            } else if (e.alpha !== null) {
+                // Android/Others
+                const alpha = e.alpha;
+                if (directionHand) {
+                    directionHand.style.transform = `rotate(${90 + (360 - alpha)}deg)`;
+                }
+            }
+        });
+
+        // --- Utility: calculate NS/EW offset ---
+        function calculateOffset(from, to) {
+            if (!from) return "Waiting for GPS...";
+            const R = 6378137; // Earth radius in metres
+
+            const dLat = (to.lat - from.lat) * Math.PI/180;
+            const dLon = (to.lng - from.lng) * Math.PI/180;
+
+            const northMetres = dLat * R; 
+            const eastMetres = dLon * R * Math.cos(from.lat * Math.PI/180);
+
+            const ns = northMetres >= 0 ? "N" : "S";
+            const ew = eastMetres >= 0 ? "E" : "W";
+
+            return `${Math.abs(northMetres).toFixed(1)} m ${ns}, ${Math.abs(eastMetres).toFixed(1)} m ${ew}`;
+        }
+
+        // --- Load CSV ---
+        const csvUrl = "https://raw.githubusercontent.com/boobalootoo/WILDPIX/main/cardinfo.csv";
+
+        Papa.parse(csvUrl, {
+            download: true,
+            header: true,
+            complete: function(results) {
+                const grouped = {};
+
+                results.data.forEach(row => {
+                    if (row["example coords"] && row["image"]) {
+                        const coords = row["example coords"].trim();
+                        const parts = coords.split(",");
+                        if (parts.length === 2) {
+                            const lat = parseFloat(parts[0].trim());
+                            const lon = parseFloat(parts[1].trim());
+
+                            if (!isNaN(lat) && !isNaN(lon)) {
+                                const key = `${lat},${lon}`;
+                                if (!grouped[key]) grouped[key] = [];
+                                grouped[key].push({
+                                    name: row["Common Name"] || "Unknown species",
+                                    image: row["image"],
+                                    lat, lon
+                                });
+                            }
+                        }
+                    }
+                });
+
+                // Place markers
+                Object.keys(grouped).forEach(key => {
+                    const [lat, lon] = key.split(",").map(Number);
+                    const entries = grouped[key];
+
+                    const icon = L.icon({
+                        iconUrl: entries[0].image,
+                        iconSize: [40, 40],
+                        className: 'species-icon'
+                    });
+
+                    const marker = L.marker([lat, lon], { icon });
+
+                    let index = 0;
+                    function getPopupContent() {
+                        const e = entries[index];
+                        const offsetText = calculateOffset(currentLocation, {lat:e.lat, lng:e.lon});
+                        return `
+                            <div class="popup-gallery">
+                                <strong>${e.name}</strong><br>
+                                <img src="${e.image}" alt="${e.name}"><br>
+                                <button onclick="prevImage('${key}')">&lt; Prev</button>
+                                <button onclick="nextImage('${key}')">Next &gt;</button>
+                                <p>${index + 1} / ${entries.length}</p>
+                                <div class="compass">📏 ${offsetText}</div>
+                            </div>
+                        `;
+                    }
+
+                    marker.bindPopup(getPopupContent);
+
+                    marker._galleryData = { entries, index, getPopupContent };
+
+                    markers.addLayer(marker);
+                });
+            }
+        });
+
+        // --- Refresh all open popups when location updates ---
+        function refreshAllPopups() {
+            markers.eachLayer(marker => {
+                if (marker._popup && marker.isPopupOpen() && marker._galleryData) {
+                    marker.setPopupContent(marker._galleryData.getPopupContent());
+                }
+            });
+        }
+
+        // --- Gallery navigation ---
+        window.prevImage = function(key) {
+            markers.eachLayer(marker => {
+                if (marker._galleryData && marker.getLatLng().toString() === `LatLng(${key})`) {
+                    const data = marker._galleryData;
+                    data.index = (data.index - 1 + data.entries.length) % data.entries.length;
+                    marker.setPopupContent(data.getPopupContent());
+                }
+            });
+        };
+
+        window.nextImage = function(key) {
+            markers.eachLayer(marker => {
+                if (marker._galleryData && marker.getLatLng().toString() === `LatLng(${key})`) {
+                    const data = marker._galleryData;
+                    data.index = (data.index + 1) % data.entries.length;
+                    marker.setPopupContent(data.getPopupContent());
+                }
+            });
+        };
+
+        // --- Camera and resizing functionality ---
+        const cameraContainer = document.getElementById('camera-container');
+        const cameraFeed = document.getElementById('camera-feed');
+        const dragHandle = document.getElementById('drag-handle');
+        const mapDiv = document.getElementById('map');
+        let isDragging = false;
+        let lastY = 0;
+
+        // Request camera access
+        if (navigator.mediaDevices && navigator.mediaDevices.getUserMedia) {
+            navigator.mediaDevices.getUserMedia({ video: true, audio: false })
+                .then(stream => {
+                    cameraFeed.srcObject = stream;
+                })
+                .catch(err => {
+                    console.error("Error accessing camera: ", err);
+                    cameraContainer.innerHTML = '<div>Camera not available</div>';
+                });
+        } else {
+            cameraContainer.innerHTML = '<div>Camera not supported on this browser</div>';
+        }
+
+        // Drag functionality
+        dragHandle.addEventListener('mousedown', (e) => {
+            isDragging = true;
+            lastY = e.clientY;
+            document.body.style.cursor = 'ns-resize';
+        });
+        
+        dragHandle.addEventListener('touchstart', (e) => {
+            isDragging = true;
+            lastY = e.touches[0].clientY;
+            document.body.style.cursor = 'ns-resize';
+        });
+
+        document.addEventListener('mousemove', (e) => {
+            if (!isDragging) return;
+            const deltaY = e.clientY - lastY;
+            const newHeight = cameraContainer.clientHeight + deltaY;
+            const maxHeight = window.innerHeight * 0.9;
+            const minHeight = 50;
+            
+            if (newHeight > minHeight && newHeight < maxHeight) {
+                cameraContainer.style.height = `${newHeight}px`;
+                mapDiv.style.height = `${window.innerHeight - newHeight}px`;
+                lastY = e.clientY;
+            }
+        });
+        
+        document.addEventListener('touchmove', (e) => {
+            if (!isDragging) return;
+            const deltaY = e.touches[0].clientY - lastY;
+            const newHeight = cameraContainer.clientHeight + deltaY;
+            const maxHeight = window.innerHeight * 0.9;
+            const minHeight = 50;
+            
+            if (newHeight > minHeight && newHeight < maxHeight) {
+                cameraContainer.style.height = `${newHeight}px`;
+                mapDiv.style.height = `${window.innerHeight - newHeight}px`;
+                lastY = e.touches[0].clientY;
+            }
+        });
+
+        document.addEventListener('mouseup', () => {
+            if (isDragging) {
+                isDragging = false;
+                document.body.style.cursor = 'default';
+                map.invalidateSize(); // Invalidate Leaflet's map size after resizing
+            }
+        });
+        
+        document.addEventListener('touchend', () => {
+            if (isDragging) {
+                isDragging = false;
+                document.body.style.cursor = 'default';
+                map.invalidateSize();
+            }
+        });
+    </script>
+</body>
+</html>
+
