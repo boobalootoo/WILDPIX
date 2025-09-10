@@ -1,0 +1,110 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>10x10 Grid with Coordinates</title>
+  <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css"/>
+  <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+  <style>
+    html, body { height: 100%; margin: 0; }
+    #map { width: 100%; height: 100%; }
+    .grid-label {
+      font-size: 10px;
+      color: red;
+      background: white;
+      padding: 1px;
+    }
+    .location-marker {
+      width: 12px;
+      height: 12px;
+      background: red;
+      border-radius: 50%;
+      border: 2px solid white;
+    }
+  </style>
+</head>
+<body>
+  <div id="map"></div>
+
+  <script>
+    // Initialize map
+    const map = L.map('map').setView([54.5, -2.5], 20);
+
+    // Satellite basemap
+    L.tileLayer('https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}', {
+      attribution: 'Tiles © Esri',
+      maxNativeZoom: 18,
+      maxZoom: 26
+    }).addTo(map);
+
+    let gridLayer = L.layerGroup().addTo(map);
+    let userMarker = null;
+
+    function drawGrid(center) {
+      gridLayer.clearLayers();
+
+      const sizeLat = 0.00001;   // ~1m latitude
+      const sizeLng = 0.000015;  // ~1m longitude at UK latitude
+      const half = 5; // 10x10 grid (5 each side)
+
+      for (let i = -half; i < half; i++) {
+        for (let j = -half; j < half; j++) {
+          const lat = center.lat + i * sizeLat;
+          const lng = center.lng + j * sizeLng;
+
+          const bounds = [
+            [lat, lng],
+            [lat + sizeLat, lng + sizeLng]
+          ];
+
+          // Draw transparent square
+          const rect = L.rectangle(bounds, { color: "blue", weight: 1, fillOpacity: 0 }).addTo(gridLayer);
+
+          // Add label in middle of square
+          const midLat = lat + sizeLat / 2;
+          const midLng = lng + sizeLng / 2;
+          const coordsText = `${lat.toFixed(6)}, ${lng.toFixed(6)}`;
+
+          L.marker([midLat, midLng], {
+            icon: L.divIcon({
+              className: "grid-label",
+              html: coordsText,
+              iconSize: [50, 20]
+            })
+          }).addTo(gridLayer);
+
+          // Copy to clipboard on click
+          rect.on("click", () => {
+            navigator.clipboard.writeText(coordsText).then(() => {
+              alert("Copied: " + coordsText);
+            });
+          });
+        }
+      }
+    }
+
+    // Center grid on map move
+    map.on("moveend", () => {
+      drawGrid(map.getCenter());
+    });
+
+    // User location
+    map.locate({ setView: true, maxZoom: 22 });
+    map.on("locationfound", (e) => {
+      drawGrid(e.latlng);
+
+      if (userMarker) {
+        userMarker.setLatLng(e.latlng);
+      } else {
+        userMarker = L.marker(e.latlng, {
+          icon: L.divIcon({
+            className: "location-marker",
+            iconSize: [12, 12]
+          })
+        }).addTo(map);
+      }
+    });
+  </script>
+</body>
+</html>
