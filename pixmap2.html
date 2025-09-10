@@ -1,0 +1,178 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Satellite Map Pixelation</title>
+    <link rel="stylesheet" href="https://unpkg.com/leaflet@1.7.1/dist/leaflet.css" />
+    <script src="https://unpkg.com/leaflet@1.7.1/dist/leaflet.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/html2canvas/1.4.1/html2canvas.min.js"></script>
+    <style>
+        body {
+            font-family: Arial, sans-serif;
+            text-align: center;
+        }
+        #mapContainer {
+            width: 600px;
+            height: 600px;
+            border: 1px solid black;
+            position: relative;
+            margin: auto;
+            overflow: hidden;
+        }
+        #map {
+            width: 100%;
+            height: 100%;
+            position: absolute;
+            top: 0;
+            left: 0;
+            z-index: 1;
+        }
+        #canvas {
+            position: absolute;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 100%;
+            pointer-events: none;
+            display: none;
+            z-index: 2;
+        }
+    </style>
+</head>
+<body>
+    <h1>Apply Pixelation Filter to UK Satellite Map</h1>
+    <button id="toggleOverlay">Toggle Pixelation Overlay</button>
+    <div id="mapContainer">
+        <div id="map"></div>
+        <canvas id="canvas"></canvas>
+    </div>
+    <div class="controls">
+        <button id="zoomIn">Zoom In</button>
+        <button id="zoomOut">Zoom Out</button>
+        <button id="undo">Undo</button>
+        <label for="gridSizeSlider">Grid Size:</label>
+        <input type="range" id="gridSizeSlider" min="1" max="250" step="10" value="10">
+        <span id="gridSizeValue">10</span>
+    </div>
+
+    <script>
+        const canvas = document.getElementById('canvas');
+        const ctx = canvas.getContext('2d');
+        const toggleButton = document.getElementById('toggleOverlay');
+        const zoomInButton = document.getElementById('zoomIn');
+        const zoomOutButton = document.getElementById('zoomOut');
+        const undoButton = document.getElementById('undo');
+        const gridSizeSlider = document.getElementById('gridSizeSlider');
+        const gridSizeValue = document.getElementById('gridSizeValue');
+
+        let overlayVisible = false;
+        let gridSize = parseInt(gridSizeSlider.value);
+
+        const map = L.map('map', {
+            center: [54.5, -2.5],
+            zoom: 6,
+            maxZoom: 26, // Increased maxZoom to allow for overzooming
+            minZoom: 6,
+            layers: [
+                L.tileLayer('https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}', {
+                    attribution: 'Tiles © Esri',
+                    maxNativeZoom: 18,
+                    maxZoom: 26
+                })
+            ]
+        });
+
+        // WARNING: This approach relies on `html2canvas` and may not work due to browser security restrictions (CORS).
+        // It is not possible to read pixel data from an external tile server without specific server-side configuration.
+        // As a result, the canvas may appear blank.
+        function applyPixelation() {
+            const size = map.getSize();
+            canvas.width = size.x;
+            canvas.height = size.y;
+            ctx.clearRect(0, 0, canvas.width, canvas.height);
+
+            // Use html2canvas to capture the map view
+            html2canvas(document.getElementById('map'), { useCORS: true }).then((capturedCanvas) => {
+                ctx.drawImage(capturedCanvas, 0, 0, canvas.width, canvas.height);
+
+                const pixelSizeX = Math.floor(canvas.width / gridSize);
+                const pixelSizeY = Math.floor(canvas.height / gridSize);
+                
+                // Iterate through the grid and draw average-colored squares
+                for (let y = 0; y < canvas.height; y += pixelSizeY) {
+                    for (let x = 0; x < canvas.width; x += pixelSizeX) {
+                        const width = Math.min(pixelSizeX, canvas.width - x);
+                        const height = Math.min(pixelSizeY, canvas.height - y);
+                        
+                        // Get the pixel data for the current square
+                        try {
+                            const imageData = ctx.getImageData(x, y, width, height);
+                            const data = imageData.data;
+                            let r = 0, g = 0, b = 0, count = 0;
+                            
+                            // Calculate the average RGB values
+                            for (let i = 0; i < data.length; i += 4) {
+                                r += data[i];
+                                g += data[i + 1];
+                                b += data[i + 2];
+                                count++;
+                            }
+
+                            r = Math.floor(r / count);
+                            g = Math.floor(g / count);
+                            b = Math.floor(b / count);
+
+                            // Draw the solid-colored rectangle over the area
+                            ctx.fillStyle = `rgb(${r}, ${g}, ${b})`;
+                            ctx.fillRect(x, y, width, height);
+                            
+                        } catch (e) {
+                            console.error("Error getting image data. This is likely due to CORS policy preventing access to cross-origin images.", e);
+                            ctx.fillStyle = `rgba(0,0,0,0.5)`;
+                            ctx.fillRect(x, y, width, height);
+                        }
+                    }
+                }
+            });
+        }
+
+        toggleButton.addEventListener('click', () => {
+            overlayVisible = !overlayVisible;
+            canvas.style.display = overlayVisible ? 'block' : 'none';
+            if (overlayVisible) {
+                applyPixelation();
+            }
+        });
+
+        map.on('moveend', () => {
+            if (overlayVisible) applyPixelation();
+        });
+        map.on('zoomend', () => {
+            if (overlayVisible) applyPixelation();
+        });
+
+        zoomInButton.addEventListener('click', () => {
+            map.zoomIn(1);
+        });
+        zoomOutButton.addEventListener('click', () => {
+            map.zoomOut(1);
+        });
+
+        undoButton.addEventListener('click', () => {
+            map.setView([54.5, -2.5], 6);
+            canvas.style.display = 'none';
+            overlayVisible = false;
+        });
+
+        gridSizeSlider.addEventListener('input', () => {
+            gridSize = parseInt(gridSizeSlider.value);
+            gridSizeValue.textContent = gridSize;
+            if (overlayVisible) {
+                applyPixelation();
+            }
+        });
+    </script>
+</body>
+</html>
+
