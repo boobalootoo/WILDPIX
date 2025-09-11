@@ -1,0 +1,280 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8"/>
+<meta name="viewport" content="width=device-width,initial-scale=1"/>
+<title>Isometric voxel extractor</title>
+<style>
+  body { font-family: system-ui, -apple-system, "Segoe UI", Roboto, Arial; margin: 12px; }
+  #canvasWrap{ position: relative; display:inline-block; border:1px solid #ddd;}
+  canvas{ display:block; max-width:90vw; height:auto; }
+  .controls{ margin-left:18px; display:inline-block; vertical-align:top; max-width:40vw; }
+  button,input,select { margin:6px 0; display:block; }
+  table{ border-collapse: collapse; width:100%; font-size:12px; margin-top:8px;}
+  th,td{ border:1px solid #ddd; padding:6px; text-align:left; }
+  .hint{ font-size:13px; color:#444; margin:8px 0;}
+  .pointMarker{ position:absolute; width:12px; height:12px; transform: translate(-50%,-50%); border-radius:50%; pointer-events:none; border:2px solid #fff; box-shadow:0 0 0 2px rgba(0,0,0,0.3);}
+</style>
+</head>
+<body>
+
+<h2>Isometric voxel extractor — upload & click calibration</h2>
+
+<div id="main">
+  <div id="canvasWrap">
+    <canvas id="cv"></canvas>
+    <!-- markers will be inserted here -->
+  </div>
+
+  <div class="controls">
+    <input id="file" type="file" accept="image/*"/>
+    <div class="hint">
+      Steps:
+      <ol>
+        <li>Upload the image.</li>
+        <li>Click the top center of a voxel you choose → this becomes <b>Origin (0,0,0)</b>.</li>
+        <li>Click a neighboring voxel top in the <b>+X</b> direction (one step over).</li>
+        <li>Click a neighboring voxel top in the <b>+Y</b> direction (one step over in the other grid axis).</li>
+        <li>Click a voxel top that is one layer higher (same i,j but +1 k) → defines <b>+Z</b> step.</li>
+        <li>Set max height & thresholds, then click <b>Analyze</b>.</li>
+      </ol>
+    </div>
+
+    <label>Max height to probe (k): <input id="maxH" type="number" value="16" min="1" /></label>
+    <label>Alpha threshold (0-255): <input id="alphaThresh" type="number" value="10" min="0" max="255" /></label>
+    <label>Brightness threshold (0-255): <input id="brightThresh" type="number" value="6" min="0" max="255" /></label>
+
+    <button id="analyze">Analyze</button>
+    <button id="clearMarkers">Clear calibration</button>
+
+    <p class="hint">Calibration points (in order): <b>Origin</b>, <b>+X</b>, <b>+Y</b>, <b>+Z</b>.</p>
+
+    <div>
+      <strong>Results:</strong>
+      <div id="summary"></div>
+      <div style="max-height:280px; overflow:auto;">
+        <table id="outTable"><thead><tr><th>i</th><th>j</th><th>k</th><th>hex</th><th>screen x</th><th>screen y</th></tr></thead><tbody></tbody></table>
+      </div>
+      <button id="downloadJson">Download JSON</button>
+      <button id="downloadCsv">Download CSV</button>
+    </div>
+  </div>
+</div>
+
+<script>
+(() => {
+  const file = document.getElementById('file');
+  const canvas = document.getElementById('cv');
+  const ctx = canvas.getContext('2d', { willReadFrequently: true });
+  const wrap = document.getElementById('canvasWrap');
+  const maxHInput = document.getElementById('maxH');
+  const alphaThreshInput = document.getElementById('alphaThresh');
+  const brightThreshInput = document.getElementById('brightThresh');
+  const analyzeBtn = document.getElementById('analyze');
+  const clearBtn = document.getElementById('clearMarkers');
+  const summary = document.getElementById('summary');
+  const outTableBody = document.querySelector('#outTable tbody');
+  const downloadJson = document.getElementById('downloadJson');
+  const downloadCsv = document.getElementById('downloadCsv');
+
+  let img = new Image();
+  let scale = 1;
+  let clicks = []; // store calibration screen pixel coords
+  const markers = [];
+
+  function setCanvasSize(w,h){
+    canvas.width = w;
+    canvas.height = h;
+    canvas.style.width = Math.min(w, window.innerWidth*0.6) + 'px';
+  }
+
+  file.addEventListener('change', (e)=>{
+    const f = e.target.files[0];
+    if(!f) return;
+    const url = URL.createObjectURL(f);
+    img = new Image();
+    img.onload = () => {
+      setCanvasSize(img.width, img.height);
+      ctx.clearRect(0,0,canvas.width,canvas.height);
+      ctx.drawImage(img,0,0);
+      clearCalibration(false);
+    };
+    img.src = url;
+  });
+
+  // clicking to capture calibration points (screen coords)
+  canvas.addEventListener('click', (ev) => {
+    if(!img || !img.width) return;
+    // compute clicked pixel in canvas coordinate (account for CSS scaling)
+    const rect = canvas.getBoundingClientRect();
+    const cx = (ev.clientX - rect.left) * (canvas.width / rect.width);
+    const cy = (ev.clientY - rect.top) * (canvas.height / rect.height);
+    clicks.push({x: cx, y: cy});
+    addMarker(cx,cy, clicks.length);
+    updateSummary();
+  });
+
+  function addMarker(x,y,n){
+    const el = document.createElement('div');
+    el.className = 'pointMarker';
+    el.style.left = (x / canvas.width * 100) + '%';
+    el.style.top = (y / canvas.height * 100) + '%';
+    el.style.background = ['#ff6b6b','#ffd93d','#6bcB77','#6bb0ff'][(n-1)%4] || '#fff';
+    el.title = String(n);
+    wrap.appendChild(el);
+    markers.push(el);
+  }
+
+  function clearCalibration(clearImage=true){
+    clicks = [];
+    markers.forEach(m => m.remove());
+    markers.length = 0;
+    outTableBody.innerHTML = '';
+    summary.innerText = '';
+    if(clearImage && img) {
+      ctx.clearRect(0,0,canvas.width,canvas.height);
+      ctx.drawImage(img,0,0);
+    }
+  }
+
+  clearBtn.addEventListener('click', ()=> clearCalibration());
+
+  function updateSummary(){
+    const s = [
+      `Clicked ${clicks.length} calibration point(s).`,
+      `Order: Origin, +X, +Y, +Z (recommended).`
+    ];
+    summary.innerText = s.join(' ');
+  }
+
+  // utility: sample pixel at floating coords (bilinear nearest)
+  function samplePixel(x,y){
+    const ix = Math.round(x), iy = Math.round(y);
+    if(ix < 0 || iy < 0 || ix >= canvas.width || iy >= canvas.height) return null;
+    const d = ctx.getImageData(ix, iy, 1, 1).data;
+    return {r:d[0], g:d[1], b:d[2], a:d[3]};
+  }
+
+  function rgbToHex({r,g,b}){
+    return '#' + [r,g,b].map(v => v.toString(16).padStart(2,'0')).join('');
+  }
+
+  analyzeBtn.addEventListener('click', ()=> {
+    if(!img || !img.width) { alert('Upload an image first.'); return; }
+    // Need at least origin + two axes. For z we can default if not provided.
+    if(clicks.length < 3) { alert('Please click at least Origin, +X and +Y calibration points.'); return; }
+    const origin = clicks[0];
+    const pX = clicks[1];
+    const pY = clicks[2];
+    // compute basis vectors (screen pixels) for one unit step in i and j
+    const bx = { x: pX.x - origin.x, y: pX.y - origin.y};
+    const by = { x: pY.x - origin.x, y: pY.y - origin.y};
+    let bz;
+    if(clicks.length >= 4){
+      const pZ = clicks[3];
+      bz = { x: pZ.x - origin.x, y: pZ.y - origin.y};
+    } else {
+      // typical isometric z step is approx negative average of by and bx vertical component:
+      // fallback: use vertical rise approximated from bx and by (heuristic)
+      bz = { x: 0, y: Math.round(-(Math.abs(bx.x)+Math.abs(by.x))/4 - (Math.abs(bx.y)+Math.abs(by.y))/4) };
+    }
+
+    // determine scanning bounds: we tile i,j so that screen points fall inside image
+    // We'll find ranges of i and j such that origin + i*bx + j*by lies inside canvas bounds.
+    const maxI = parseInt(canvas.width/Math.max(1, Math.hypot(bx.x,bx.y))) + 6;
+    const maxJ = parseInt(canvas.width/Math.max(1, Math.hypot(by.x,by.y))) + 6;
+    // Instead of assuming positive ranges, find min & max by scanning a reasonable box around origin.
+    const range =  Math.max(maxI, maxJ, 40);
+    const minI = -range, maxI2 = range, minJ = -range, maxJ2 = range;
+    const maxK = Math.max(1, parseInt(maxHInput.value) || 16);
+    const alphaThreshold = parseInt(alphaThreshInput.value) || 10;
+    const brightThreshold = parseInt(brightThreshInput.value) || 6;
+
+    outTableBody.innerHTML = '';
+    const out = [];
+
+    // Helper to test if a sample pixel is "present"
+    function isPresent(px){
+      if(!px) return false;
+      if(px.a !== undefined && px.a <= alphaThreshold) {
+        // treat transparent as absent
+        // but if alpha isn't informative, fallback to brightness test
+        const bright = (px.r + px.g + px.b) / 3;
+        return bright > brightThreshold;
+      }
+      const bright = (px.r + px.g + px.b) / 3;
+      return bright > brightThreshold;
+    }
+
+    // loop over i,j
+    // We'll choose ordering with j outer, i inner so result is stable
+    for(let j=minJ; j<=maxJ2; j++){
+      for(let i=minI; i<=maxI2; i++){
+        // compute base screen point for k=0
+        const sx = origin.x + i*bx.x + j*by.x;
+        const sy = origin.y + i*bx.y + j*by.y;
+        // early skip if base point outside extended bounds
+        if(sx < -Math.abs(bx.x)-Math.abs(by.x) || sy < -Math.abs(bx.y)-Math.abs(by.y)
+           || sx > canvas.width + Math.abs(bx.x)+Math.abs(by.x) || sy > canvas.height + Math.abs(bx.y)+Math.abs(by.y)) {
+          continue;
+        }
+        // sample along k from 0 upward and find highest present (visible top face)
+        let highestK = null;
+        let colorAtHighest = null;
+        let screenAtHighest = null;
+        for(let k=0;k<maxK;k++){
+          const px = samplePixel(sx + k*bz.x, sy + k*bz.y);
+          if(isPresent(px)){
+            highestK = k;
+            colorAtHighest = px;
+            screenAtHighest = {x: sx + k*bz.x, y: sy + k*bz.y};
+            // continue probing upward: we want the highest visible (largest k) if stacks exist
+            // so do not break here.
+          } else {
+            // if not present at this k and we've already seen a present one below, it means stack ended
+            // but we keep searching in case higher layers exist (rare).
+            // continue scanning.
+          }
+        }
+        if(highestK !== null){
+          const hex = rgbToHex(colorAtHighest);
+          out.push({i, j, k: highestK, hex, screenX: Math.round(screenAtHighest.x), screenY: Math.round(screenAtHighest.y)});
+          const tr = document.createElement('tr');
+          tr.innerHTML = `<td>${i}</td><td>${j}</td><td>${highestK}</td><td>${hex}</td><td>${Math.round(screenAtHighest.x)}</td><td>${Math.round(screenAtHighest.y)}</td>`;
+          outTableBody.appendChild(tr);
+        }
+      }
+    }
+
+    summary.innerText = `Found ${out.length} visible voxels. (Assumes your calibration vectors map one unit steps.)`;
+
+    // store result for download
+    canvas._lastResult = out;
+  });
+
+  downloadJson.addEventListener('click', ()=>{
+    const out = canvas._lastResult || [];
+    const blob = new Blob([JSON.stringify(out,null,2)], {type:'application/json'});
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url; a.download = 'voxels.json'; a.click();
+    URL.revokeObjectURL(url);
+  });
+
+  downloadCsv.addEventListener('click', ()=>{
+    const out = canvas._lastResult || [];
+    const lines = ['i,j,k,hex,screenX,screenY'];
+    out.forEach(o => lines.push([o.i,o.j,o.k,o.hex,o.screenX,o.screenY].join(',')));
+    const blob = new Blob([lines.join('\n')], {type:'text/csv'});
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url; a.download = 'voxels.csv'; a.click();
+    URL.revokeObjectURL(url);
+  });
+
+  // initial draw guide if needed
+  ctx.fillStyle = '#f8f8f8';
+})();
+</script>
+</body>
+</html>
