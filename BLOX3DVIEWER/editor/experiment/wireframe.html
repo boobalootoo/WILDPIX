@@ -1,0 +1,391 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>3D Grid Aligner</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <style>
+        body {
+            font-family: 'Inter', sans-serif;
+            background-color: #1a202c;
+            color: #e2e8f0;
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            justify-content: center;
+            min-height: 100vh;
+            margin: 0;
+            padding: 20px;
+        }
+
+        .container {
+            width: 100%;
+            max-width: 900px;
+            background-color: #2d3748;
+            border-radius: 1rem;
+            box-shadow: 0 10px 15px rgba(0, 0, 0, 0.2);
+            padding: 2rem;
+            display: flex;
+            flex-direction: column;
+            gap: 1.5rem;
+            align-items: center;
+        }
+
+        canvas {
+            border-radius: 0.75rem;
+            box-shadow: 0 4px 6px rgba(0, 0, 0, 0.1);
+            background-color: #000;
+        }
+
+        #file-input {
+            display: none;
+        }
+
+        .custom-file-upload {
+            background-color: #4c51bf;
+            color: white;
+            padding: 0.75rem 1.5rem;
+            border-radius: 0.5rem;
+            cursor: pointer;
+            transition: background-color 0.3s, transform 0.2s;
+            font-weight: 600;
+            text-align: center;
+        }
+
+        .custom-file-upload:hover {
+            background-color: #434190;
+            transform: translateY(-2px);
+        }
+
+        .controls {
+            display: flex;
+            flex-wrap: wrap;
+            gap: 1rem;
+            justify-content: center;
+            align-items: center;
+            width: 100%;
+        }
+        .slider-group {
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            gap: 0.5rem;
+            min-width: 150px;
+        }
+        .slider-label {
+            font-size: 0.875rem;
+            color: #a0aec0;
+        }
+        input[type="range"] {
+            -webkit-appearance: none;
+            width: 100%;
+            height: 8px;
+            background: #4a5568;
+            border-radius: 5px;
+            outline: none;
+            transition: opacity .2s;
+        }
+        input[type="range"]::-webkit-slider-thumb {
+            -webkit-appearance: none;
+            appearance: none;
+            width: 20px;
+            height: 20px;
+            background: #667eea;
+            cursor: pointer;
+            border-radius: 50%;
+            border: 2px solid #a3b2e7;
+        }
+        input[type="number"] {
+            width: 100%;
+            background-color: #4a5568;
+            color: #e2e8f0;
+            padding: 0.5rem 0.75rem;
+            border-radius: 0.5rem;
+            border: 1px solid #4a5568;
+            outline: none;
+            transition: border-color 0.2s;
+        }
+        input[type="number"]:focus {
+            border-color: #667eea;
+        }
+        .footer {
+            margin-top: 2rem;
+            text-align: center;
+            font-size: 0.875rem;
+            color: #718096;
+        }
+
+        @media (max-width: 768px) {
+            .container {
+                padding: 1rem;
+            }
+            .controls {
+                flex-direction: column;
+            }
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <h1 class="text-3xl md:text-4xl font-bold mb-4">3D Grid Aligner</h1>
+        <p class="text-center text-sm mb-4">Upload an image and align the 3D grid with the perspective.</p>
+        <canvas id="canvas" class="w-full h-auto" style="aspect-ratio: 16 / 9;"></canvas>
+        <input type="file" id="file-input" accept="image/*">
+        <label for="file-input" class="custom-file-upload">Upload Image</label>
+
+        <div class="controls">
+            <div class="slider-group">
+                <label for="size" class="slider-label">Grid Size</label>
+                <input type="range" id="size" min="1" max="100" value="50">
+            </div>
+            <div class="slider-group">
+                <label for="segments-x" class="slider-label">Segments X</label>
+                <input type="number" id="segments-x" min="1" max="50" value="10">
+            </div>
+            <div class="slider-group">
+                <label for="segments-y" class="slider-label">Segments Y</label>
+                <input type="number" id="segments-y" min="1" max="50" value="10">
+            </div>
+            <div class="slider-group">
+                <label for="segments-z" class="slider-label">Segments Z</label>
+                <input type="number" id="segments-z" min="1" max="50" value="10">
+            </div>
+        </div>
+    </div>
+    <div class="footer">
+        <p>Built with Three.js and Tailwind CSS</p>
+    </div>
+
+    <!-- Three.js Library -->
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
+
+    <script>
+        // --- Global Variables ---
+        let scene, camera, renderer, grid, imagePlane;
+        let gridSize = 50;
+        let segmentsX = 10;
+        let segmentsY = 10;
+        let segmentsZ = 10;
+        let isDragging = false;
+        let isTranslating = false;
+        let previousMousePosition = { x: 0, y: 0 };
+        let shiftKeyIsPressed = false;
+
+        // --- DOM Elements ---
+        const canvas = document.getElementById('canvas');
+        const fileInput = document.getElementById('file-input');
+        const sizeInput = document.getElementById('size');
+        const segmentsXInput = document.getElementById('segments-x');
+        const segmentsYInput = document.getElementById('segments-y');
+        const segmentsZInput = document.getElementById('segments-z');
+
+        // --- Core Functions ---
+        function init() {
+            // Scene setup
+            scene = new THREE.Scene();
+
+            // Camera setup
+            camera = new THREE.PerspectiveCamera(75, canvas.clientWidth / canvas.clientHeight, 0.1, 1000);
+            camera.position.z = 100;
+
+            // Renderer setup
+            renderer = new THREE.WebGLRenderer({ canvas: canvas, antialias: true, alpha: true });
+            renderer.setSize(canvas.clientWidth, canvas.clientHeight);
+
+            // Handle window resizing
+            window.addEventListener('resize', onWindowResize, false);
+
+            // Add camera controls for interaction
+            canvas.addEventListener('mousedown', (e) => {
+                isDragging = true;
+                previousMousePosition.x = e.clientX;
+                previousMousePosition.y = e.clientY;
+                if (shiftKeyIsPressed) {
+                    isTranslating = true;
+                } else {
+                    isTranslating = false;
+                }
+            });
+
+            canvas.addEventListener('mouseup', () => {
+                isDragging = false;
+                isTranslating = false;
+            });
+
+            canvas.addEventListener('mousemove', (e) => {
+                if (isDragging) {
+                    const deltaX = e.clientX - previousMousePosition.x;
+                    const deltaY = e.clientY - previousMousePosition.y;
+                    
+                    if (isTranslating) {
+                        grid.position.x += deltaX * 0.1;
+                        grid.position.y -= deltaY * 0.1;
+                    } else {
+                        grid.rotation.y += deltaX * 0.01;
+                        grid.rotation.x += deltaY * 0.01;
+                    }
+
+                    previousMousePosition.x = e.clientX;
+                    previousMousePosition.y = e.clientY;
+                }
+            });
+
+            // Keyboard event listeners for shift key
+            window.addEventListener('keydown', (e) => {
+                if (e.key === 'Shift') {
+                    shiftKeyIsPressed = true;
+                }
+            });
+
+            window.addEventListener('keyup', (e) => {
+                if (e.key === 'Shift') {
+                    shiftKeyIsPressed = false;
+                }
+            });
+
+            // Touch event listeners for mobile (rotation only)
+            let touchStart = { x: 0, y: 0 };
+            canvas.addEventListener('touchstart', (e) => {
+                if (e.touches.length === 1) {
+                    isDragging = true;
+                    const touch = e.touches[0];
+                    touchStart.x = touch.clientX;
+                    touchStart.y = touch.clientY;
+                }
+            });
+
+            canvas.addEventListener('touchend', () => {
+                isDragging = false;
+            });
+
+            canvas.addEventListener('touchmove', (e) => {
+                if (isDragging) {
+                    e.preventDefault();
+                    const touch = e.touches[0];
+                    const deltaX = touch.clientX - touchStart.x;
+                    const deltaY = touch.clientY - touchStart.y;
+
+                    grid.rotation.y += deltaX * 0.01;
+                    grid.rotation.x += deltaY * 0.01;
+
+                    touchStart.x = touch.clientX;
+                    touchStart.y = touch.clientY;
+                }
+            });
+
+            createGrid(); // Create the initial grid
+            animate();
+        }
+
+        function onWindowResize() {
+            camera.aspect = canvas.clientWidth / canvas.clientHeight;
+            camera.updateProjectionMatrix();
+            renderer.setSize(canvas.clientWidth, canvas.clientHeight);
+        }
+
+        function animate() {
+            requestAnimationFrame(animate);
+            renderer.render(scene, camera);
+        }
+
+        function createGrid() {
+            // Dispose of old grid and its geometry/material
+            if (grid) {
+                scene.remove(grid);
+                grid.geometry.dispose();
+                grid.material.dispose();
+            }
+
+            const geometry = new THREE.BufferGeometry();
+            const vertices = [];
+            const material = new THREE.LineBasicMaterial({ color: 0xffffff, transparent: true, opacity: 0.5 });
+            const halfSize = gridSize / 2;
+
+            // Create lines along X direction
+            for (let i = 0; i <= segmentsY; i++) {
+                for (let j = 0; j <= segmentsZ; j++) {
+                    vertices.push(-halfSize, -halfSize + i * (gridSize / segmentsY), -halfSize + j * (gridSize / segmentsZ));
+                    vertices.push(halfSize, -halfSize + i * (gridSize / segmentsY), -halfSize + j * (gridSize / segmentsZ));
+                }
+            }
+
+            // Create lines along Y direction
+            for (let i = 0; i <= segmentsX; i++) {
+                for (let j = 0; j <= segmentsZ; j++) {
+                    vertices.push(-halfSize + i * (gridSize / segmentsX), -halfSize, -halfSize + j * (gridSize / segmentsZ));
+                    vertices.push(-halfSize + i * (gridSize / segmentsX), halfSize, -halfSize + j * (gridSize / segmentsZ));
+                }
+            }
+
+            // Create lines along Z direction
+            for (let i = 0; i <= segmentsX; i++) {
+                for (let j = 0; j <= segmentsY; j++) {
+                    vertices.push(-halfSize + i * (gridSize / segmentsX), -halfSize + j * (gridSize / segmentsY), -halfSize);
+                    vertices.push(-halfSize + i * (gridSize / segmentsX), -halfSize + j * (gridSize / segmentsY), halfSize);
+                }
+            }
+
+            geometry.setAttribute('position', new THREE.Float32BufferAttribute(vertices, 3));
+            grid = new THREE.LineSegments(geometry, material);
+            scene.add(grid);
+        }
+
+        function updateGrid() {
+             createGrid(); // Simply recreate the grid when a slider is changed
+        }
+
+        // --- Event Listeners ---
+        fileInput.addEventListener('change', (e) => {
+            const file = e.target.files[0];
+            if (file) {
+                const reader = new FileReader();
+                reader.onload = (event) => {
+                    const textureLoader = new THREE.TextureLoader();
+                    textureLoader.load(event.target.result, (texture) => {
+                        // Remove old image plane if it exists
+                        if (imagePlane) {
+                            scene.remove(imagePlane);
+                            imagePlane.geometry.dispose();
+                            imagePlane.material.dispose();
+                        }
+                        
+                        const planeGeo = new THREE.PlaneGeometry(100, 100);
+                        const planeMat = new THREE.MeshBasicMaterial({ map: texture, side: THREE.DoubleSide });
+                        imagePlane = new THREE.Mesh(planeGeo, planeMat);
+                        imagePlane.position.z = -20; // Position behind the grid
+                        scene.add(imagePlane);
+                    });
+                };
+                reader.readAsDataURL(file);
+            }
+        });
+
+        sizeInput.addEventListener('input', (e) => {
+            gridSize = parseFloat(e.target.value);
+            updateGrid();
+        });
+
+        segmentsXInput.addEventListener('input', (e) => {
+            segmentsX = parseInt(e.target.value);
+            updateGrid();
+        });
+
+        segmentsYInput.addEventListener('input', (e) => {
+            segmentsY = parseInt(e.target.value);
+            updateGrid();
+        });
+
+        segmentsZInput.addEventListener('input', (e) => {
+            segmentsZ = parseInt(e.target.value);
+            updateGrid();
+        });
+
+        // --- Initialize the application ---
+        window.onload = () => {
+            init();
+        }
+
+    </script>
+</body>
+</html>
