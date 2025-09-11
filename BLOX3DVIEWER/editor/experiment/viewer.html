@@ -1,0 +1,239 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Voxel Model Viewer</title>
+    <!-- Tailwind CSS CDN -->
+    <script src="https://cdn.tailwindcss.com"></script>
+    <style>
+        body {
+            font-family: 'Inter', sans-serif;
+            background-color: #1a202c; /* Dark background */
+        }
+        canvas {
+            display: block;
+            touch-action: none; /* Prevents mobile scrolling issues */
+        }
+    </style>
+</head>
+<body class="bg-gray-900 text-white flex flex-col items-center justify-center min-h-screen p-4">
+
+    <!-- Title and instructions -->
+    <div class="mb-6 text-center">
+        <h1 class="text-4xl font-bold mb-2">Voxel Model Viewer</h1>
+        <p class="text-lg text-gray-400">Drag to rotate, scroll to zoom.</p>
+    </div>
+
+    <!-- Container for the canvas -->
+    <div id="container" class="w-full max-w-4xl aspect-video bg-gray-800 rounded-lg shadow-xl overflow-hidden relative">
+        <canvas id="voxel-canvas" class="w-full h-full"></canvas>
+        <div id="loading-overlay" class="absolute inset-0 flex items-center justify-center bg-gray-800 bg-opacity-75 z-10 rounded-lg">
+            <div class="text-center">
+                <div class="animate-spin rounded-full h-12 w-12 border-4 border-t-4 border-blue-500 border-opacity-75 mb-4"></div>
+                <p class="text-lg font-medium">Loading Voxel Model...</p>
+            </div>
+        </div>
+    </div>
+
+    <!-- Upload button and hidden file input -->
+    <div class="mt-4">
+        <input type="file" id="fileInput" accept=".json" class="hidden">
+        <label for="fileInput" class="cursor-pointer bg-blue-600 hover:bg-blue-700 text-white font-bold py-2 px-6 rounded-full transition duration-300 transform hover:scale-105 shadow-lg">
+            Upload .json File
+        </label>
+    </div>
+    
+    <!-- Message Box -->
+    <div id="message-box" class="mt-4 p-3 bg-red-800 text-red-200 rounded-lg hidden"></div>
+
+    <!-- Three.js and OrbitControls CDNs -->
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/three@0.128.0/examples/js/controls/OrbitControls.js"></script>
+
+    <script type="module">
+        // Set up the scene, camera, and renderer
+        const scene = new THREE.Scene();
+        const camera = new THREE.PerspectiveCamera(75, 1, 0.1, 1000);
+        const renderer = new THREE.WebGLRenderer({ canvas: document.getElementById('voxel-canvas'), antialias: true, alpha: true });
+        renderer.setClearColor(0x000000, 0); // Transparent background
+
+        const container = document.getElementById('container');
+        const loadingOverlay = document.getElementById('loading-overlay');
+        const canvas = renderer.domElement;
+        const fileInput = document.getElementById('fileInput');
+        const messageBox = document.getElementById('message-box');
+        
+        // Function to handle window resizing
+        function onWindowResize() {
+            const containerWidth = container.clientWidth;
+            const containerHeight = container.clientHeight;
+            renderer.setSize(containerWidth, containerHeight);
+            camera.aspect = containerWidth / containerHeight;
+            camera.updateProjectionMatrix();
+        }
+
+        // Add OrbitControls for user interaction
+        const controls = new THREE.OrbitControls(camera, renderer.domElement);
+        controls.enableDamping = true; // Add a sense of momentum to the rotation
+        controls.dampingFactor = 0.05;
+        controls.screenSpacePanning = false;
+        controls.minDistance = 50;
+        controls.maxDistance = 500;
+        controls.maxPolarAngle = Math.PI / 2;
+
+        // Add some lighting to the scene
+        const ambientLight = new THREE.AmbientLight(0x404040); // Soft white light
+        scene.add(ambientLight);
+        const directionalLight = new THREE.DirectionalLight(0xffffff, 0.8);
+        directionalLight.position.set(10, 10, 10).normalize();
+        scene.add(directionalLight);
+        
+        // A global variable to hold the voxel group so it can be cleared
+        let voxelGroup = null;
+
+        // Function to remove the existing voxel model from the scene
+        function removeVoxelModel() {
+            if (voxelGroup) {
+                // Dispose of geometries and materials to free up memory
+                voxelGroup.traverse(object => {
+                    if (object.isMesh) {
+                        object.geometry.dispose();
+                        object.material.dispose();
+                    }
+                });
+                scene.remove(voxelGroup);
+                voxelGroup = null;
+            }
+        }
+
+        // Function to render the voxel model from an array of voxel data
+        function renderVoxels(voxels) {
+            removeVoxelModel();
+            
+            // Show the loading overlay again for a fresh render
+            loadingOverlay.classList.remove('hidden');
+
+            // Find the bounding box to center the model
+            let minX = Infinity, minY = Infinity, minZ = Infinity;
+            let maxX = -Infinity, maxY = -Infinity, maxZ = -Infinity;
+
+            const geometry = new THREE.BoxGeometry(1, 1, 1);
+            
+            voxelGroup = new THREE.Group();
+
+            voxels.forEach(voxel => {
+                const { i, j, k, hex } = voxel;
+                const material = new THREE.MeshStandardMaterial({ color: parseInt(hex.substring(1), 16) });
+                const mesh = new THREE.Mesh(geometry, material);
+                
+                // Position the mesh using the voxel coordinates
+                mesh.position.set(i, k, j); // Mapping i,j,k to x,y,z
+                voxelGroup.add(mesh);
+
+                // Update bounding box
+                minX = Math.min(minX, i);
+                minY = Math.min(minY, k);
+                minZ = Math.min(minZ, j);
+                maxX = Math.max(maxX, i);
+                maxY = Math.max(maxY, k);
+                maxZ = Math.max(maxZ, j);
+            });
+
+            scene.add(voxelGroup);
+
+            // Calculate the center of the model
+            const centerX = (minX + maxX) / 2;
+            const centerY = (minY + maxY) / 2;
+            const centerZ = (minZ + maxZ) / 2;
+
+            // Center the entire group
+            voxelGroup.position.set(-centerX, -centerY, -centerZ);
+
+            // Position the camera to view the model
+            const modelSize = new THREE.Vector3(maxX - minX, maxY - minY, maxZ - minZ);
+            const maxDim = Math.max(modelSize.x, modelSize.y, modelSize.z);
+            const fov = camera.fov * (Math.PI / 180);
+            const cameraDistance = Math.abs(maxDim / 2 / Math.tan(fov / 2)) * 1.5; // Adjust distance
+            
+            camera.position.set(cameraDistance, cameraDistance, cameraDistance);
+            camera.lookAt(new THREE.Vector3(0, 0, 0));
+
+            // Hide the loading overlay
+            loadingOverlay.classList.add('hidden');
+            
+            // Start the animation loop if it's not already running
+            if (!renderer.animationRunning) {
+                renderer.animationRunning = true;
+                animate();
+            }
+        }
+        
+        // Show an error message in the message box
+        function showMessage(message, isError = true) {
+            messageBox.textContent = message;
+            messageBox.classList.remove('hidden');
+            messageBox.classList.toggle('bg-red-800', isError);
+            messageBox.classList.toggle('text-red-200', isError);
+            messageBox.classList.toggle('bg-green-800', !isError);
+            messageBox.classList.toggle('text-green-200', !isError);
+            setTimeout(() => {
+                messageBox.classList.add('hidden');
+            }, 5000);
+        }
+
+        // Fetch the initial voxel data from the uploaded file
+        fetch('uploaded:voxels.json')
+            .then(response => {
+                if (!response.ok) {
+                    throw new Error(`HTTP error! status: ${response.status}`);
+                }
+                return response.json();
+            })
+            .then(voxels => {
+                renderVoxels(voxels);
+            })
+            .catch(error => {
+                console.error('Error fetching or parsing initial voxel data:', error);
+                loadingOverlay.innerHTML = `<p class="text-red-500 text-lg font-medium">Error loading initial model. Try uploading a file.</p>`;
+                showMessage('Failed to load initial model. Please upload a valid JSON file.', true);
+            });
+
+        // Add a change event listener to the file input
+        fileInput.addEventListener('change', (event) => {
+            const file = event.target.files[0];
+            if (!file) {
+                return;
+            }
+
+            // Show loading message while processing the new file
+            loadingOverlay.classList.remove('hidden');
+            
+            const reader = new FileReader();
+            reader.onload = (e) => {
+                try {
+                    const newVoxels = JSON.parse(e.target.result);
+                    renderVoxels(newVoxels);
+                    showMessage('Model loaded successfully!', false);
+                } catch (err) {
+                    console.error('Error parsing uploaded file:', err);
+                    loadingOverlay.classList.add('hidden');
+                    showMessage('Invalid JSON file. Please upload a valid voxel model file.', true);
+                }
+            };
+            reader.readAsText(file);
+        });
+
+        // Animation loop
+        function animate() {
+            requestAnimationFrame(animate);
+            controls.update(); // Only required if controls.enableDamping is set to true
+            renderer.render(scene, camera);
+        }
+
+        // Initial setup and event listeners
+        onWindowResize();
+        window.addEventListener('resize', onWindowResize, false);
+    </script>
+</body>
+</html>
