@@ -9,14 +9,14 @@ Common Blue Butterfly,,,,
 Common Crab Spider,,,,
 Common Darter Dragonfly,,,,
 Common Fox Spider,,,,
-Common Frog,,https://github.com/boobalootoo/WILDPIX/blob/main/BLOX3DVIEWER/JSON/commonfrogvox.json,"50.803607, -0.045870",https://boobalootoo.github.io/simplifiedgame/images/Common%20Frog.png
+Common Frog,,https://github.com/boobalootoo/WILDPIX/blob/main/BLOX3DVIEWER/GLB/frog.glb,"50.803607, -0.045870",https://boobalootoo.github.io/simplifiedgame/images/Common%20Frog.png
 Common Lizard,,,,
 Common Toad,,,"50.803356, -0.044775",
 Death Cap Mushroom,,,,
 Devils Coach Horse,,,,
 European Adder,,,,
 European Garden Spider,,,,
-False Black Widow Spider,https://github.com/boobalootoo/WILDPIX/blob/main/BLOX3DVIEWER/JSON/falseblackwidow.json,https://github.com/boobalootoo/WILDPIX/blob/main/BLOX3DVIEWER/JSON/falseblackwidowspidervox.json,"50.803590, -0.045847",https://boobalootoo.github.io/simplifiedgame/images/False%20Black%20Widow%20Spider.png
+False Black Widow Spider,https://github.com/boobalootoo/WILDPIX/blob/main/BLOX3DVIEWER/JSON/falseblackwidow.json,https://github.com/boobalootoo/WILDPIX/blob/main/BLOX3DVIEWER/GLB/spider.glb,"50.803590, -0.045847",https://boobalootoo.github.io/simplifiedgame/images/False%20Black%20Widow%20Spider.png
 Fen Raft Spider,,,,
 Fly Agaric Mushroom,,,,
 Grass Snake,,,,
@@ -43,7 +43,7 @@ Sand Lizard,,,,
 Scarlet Elf Cup Fungus,,,,
 Seven-spot Ladybird,,,,
 Shaggy Inkcap Mushroom,,,,
-Slow Worm,,,"50.803354, -0.044774",https://boobalootoo.github.io/simplifiedgame/images/Slow%20Worm.png
+Slow Worm,,https://github.com/boobalootoo/WILDPIX/blob/main/BLOX3DVIEWER/GLB/slowworm.glb,"50.803354, -0.044774",https://boobalootoo.github.io/simplifiedgame/images/Slow%20Worm.png
 Small Tortoiseshell Butterfly,,,,
 Smooth Snake,,,,
 Southern Hawker Dragonfly,,,,
@@ -63,7 +63,7 @@ Barn Owl,,,,
 Bearded Tit,,,,
 Black Guillemot,,,,
 Black Redstart,,,,
-Blackcap,https://github.com/boobalootoo/WILDPIX/blob/main/BLOX3DVIEWER/JSON/blackcap.json,https://github.com/boobalootoo/WILDPIX/blob/main/BLOX3DVIEWER/JSON/blackcapvox.json,"50.803588, -0.045918",https://boobalootoo.github.io/simplifiedgame/images/Blackcap.png
+Blackcap,https://github.com/boobalootoo/WILDPIX/blob/main/BLOX3DVIEWER/JSON/blackcap.json,https://github.com/boobalootoo/WILDPIX/blob/main/BLOX3DVIEWER/GLB/blackcap.glb,"50.803588, -0.045918",https://boobalootoo.github.io/simplifiedgame/images/Blackcap.png
 Black-headed Gull,,,,
 Black-throated Thrush,,,,
 Blue Tit,,,,
