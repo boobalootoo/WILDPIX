@@ -1,0 +1,235 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Closest Sightings 3D Viewer</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <style>
+        body {
+            font-family: 'Inter', sans-serif;
+            background-color: #1a1a1a;
+            color: #e5e7eb;
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            justify-content: center;
+            min-height: 100vh;
+            margin: 0;
+            overflow: hidden;
+        }
+
+        .container {
+            width: 95%;
+            max-width: 800px;
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            background-color: #2d3748;
+            border-radius: 12px;
+            box-shadow: 0 4px 6px rgba(0, 0, 0, 0.1);
+            padding: 1.5rem;
+        }
+
+        #viewer-container {
+            position: relative;
+            width: 100%;
+            height: 100vh;
+            border-radius: 8px;
+            overflow: hidden;
+            background-color: #242424;
+        }
+
+        #viewer-canvas {
+            width: 100%;
+            height: 100%;
+            display: block;
+        }
+    </style>
+</head>
+<body>
+
+<div id="viewer-container">
+    <canvas id="viewer-canvas"></canvas>
+</div>
+
+<script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/three@0.128.0/examples/js/loaders/GLTFLoader.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/three@0.128.0/examples/js/controls/OrbitControls.js"></script>
+
+<script>
+    window.onload = function() {
+        const CSV_URL = 'https://raw.githubusercontent.com/boobalootoo/WILDPIX/main/cardinfo.csv';
+        const container = document.getElementById('viewer-container');
+        const canvas = document.getElementById('viewer-canvas');
+
+        let camera, scene, renderer, controls;
+
+        function animate() {
+            requestAnimationFrame(animate);
+            if (controls) controls.update();
+            if (renderer) renderer.render(scene, camera);
+        }
+
+        // Initialize Three.js scene
+        function initThreeJS() {
+            scene = new THREE.Scene();
+            scene.background = new THREE.Color(0x242424);
+
+            camera = new THREE.PerspectiveCamera(75, container.clientWidth / container.clientHeight, 0.1, 1000);
+            camera.position.z = 10;
+
+            renderer = new THREE.WebGLRenderer({ canvas: canvas, antialias: true });
+            renderer.setSize(container.clientWidth, container.clientHeight);
+            renderer.setPixelRatio(window.devicePixelRatio);
+
+            const ambientLight = new THREE.AmbientLight(0xffffff, 0.5);
+            scene.add(ambientLight);
+            const directionalLight = new THREE.DirectionalLight(0xffffff, 0.5);
+            directionalLight.position.set(5, 10, 7.5);
+            scene.add(directionalLight);
+
+            controls = new THREE.OrbitControls(camera, renderer.domElement);
+            controls.enableDamping = true;
+            controls.dampingFactor = 0.25;
+
+            window.addEventListener('resize', onWindowResize);
+            animate();
+        }
+
+        function onWindowResize() {
+            camera.aspect = container.clientWidth / container.clientHeight;
+            camera.updateProjectionMatrix();
+            renderer.setSize(container.clientWidth, container.clientHeight);
+        }
+
+        // --- CSV parser (handles quoted commas, escaped quotes) ---
+        function parseCSV(text) {
+            if (!text) return [];
+            if (text.charCodeAt(0) === 0xFEFF) text = text.slice(1);
+            const rows = [];
+            let cur = '', row = [], inQuotes = false;
+            for (let i = 0; i < text.length; i++) {
+                const ch = text[i], next = text[i + 1];
+                if (ch === '"') {
+                    if (inQuotes && next === '"') { cur += '"'; i++; continue; }
+                    inQuotes = !inQuotes; continue;
+                }
+                if (ch === ',' && !inQuotes) { row.push(cur); cur = ''; continue; }
+                if ((ch === '\n' || ch === '\r') && !inQuotes) {
+                    if (ch === '\r' && text[i + 1] === '\n') i++;
+                    row.push(cur); rows.push(row); row = []; cur = ''; continue;
+                }
+                cur += ch;
+            }
+            row.push(cur);
+            if (!(row.length === 1 && row[0] === '')) rows.push(row);
+            return rows.map(r => r.map(cell =>
+                (cell.startsWith('"') && cell.endsWith('"')) ? cell.slice(1, -1).replace(/""/g, '"') : cell
+            ));
+        }
+
+        // --- Distance function (Haversine formula) ---
+        function distance(lat1, lon1, lat2, lon2) {
+            const R = 6371; // km
+            const dLat = (lat2 - lat1) * Math.PI / 180;
+            const dLon = (lon2 - lon1) * Math.PI / 180;
+            const a = Math.sin(dLat / 2) ** 2 +
+                Math.cos(lat1 * Math.PI / 180) * Math.cos(lat2 * Math.PI / 180) *
+                Math.sin(dLon / 2) ** 2;
+            return R * 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
+        }
+
+        // Function to convert a GitHub blob URL to a raw content URL
+        function convertGithubUrl(url) {
+            if (url.includes('github.com') && url.includes('/blob/')) {
+                return url.replace('github.com', 'raw.githubusercontent.com').replace('/blob/', '/');
+            }
+            return url;
+        }
+
+        // Main function to get location and load models
+        async function loadClosestSightings() {
+            try {
+                // Clear any existing models
+                scene.children = scene.children.filter(child => child.isLight);
+                
+                const pos = await new Promise((resolve, reject) => {
+                    if (!navigator.geolocation) return reject("Geolocation not supported");
+                    navigator.geolocation.getCurrentPosition(resolve, reject);
+                });
+                const myLat = pos.coords.latitude;
+                const myLon = pos.coords.longitude;
+                
+                const res = await fetch(CSV_URL);
+                if (!res.ok) throw new Error("HTTP " + res.status);
+                const text = await res.text();
+                const rows = parseCSV(text);
+                if (rows.length <= 1) throw new Error("CSV is empty or malformed.");
+
+                const data = rows.slice(1);
+                const withDistances = data.map(r => {
+                    let lat = NaN, lon = NaN;
+                    try {
+                        const parts = r[3].split(','); // 4th column
+                        lat = parseFloat(parts[0]);
+                        lon = parseFloat(parts[1]);
+                    } catch { }
+                    const dist = isNaN(lat) || isNaN(lon) ? Infinity : distance(myLat, myLon, lat, lon);
+                    return { row: r, dist };
+                });
+
+                const closest = withDistances.sort((a, b) => a.dist - b.dist).slice(0, 3);
+                if (closest.length === 0) {
+                    console.error("Could not find any sightings with valid coordinates.");
+                    return;
+                }
+                
+                const loader = new THREE.GLTFLoader();
+                const modelUrls = closest.map(item => item.row[2]); // 3rd column
+                
+                let loadedModels = [];
+                for (let i = 0; i < modelUrls.length; i++) {
+                    const url = convertGithubUrl(modelUrls[i]);
+                    try {
+                        const gltf = await new Promise((resolve, reject) => {
+                            loader.load(url, resolve, undefined, reject);
+                        });
+                        loadedModels.push(gltf.scene);
+                    } catch (error) {
+                        console.error(`Failed to load model from URL: ${url}`, error);
+                    }
+                }
+
+                if (loadedModels.length === 0) {
+                    console.error('No models could be loaded from the CSV data.');
+                    return;
+                }
+
+                const spacing = 4;
+                const startX = -((loadedModels.length - 1) * spacing) / 2;
+                
+                loadedModels.forEach((model, index) => {
+                    // Position the models next to each other
+                    model.position.x = startX + index * spacing;
+                    // Scale models to a reasonable size
+                    const box = new THREE.Box3().setFromObject(model);
+                    const size = box.getSize(new THREE.Vector3());
+                    const maxDim = Math.max(size.x, size.y, size.z);
+                    const scaleFactor = 2 / maxDim;
+                    model.scale.set(scaleFactor, scaleFactor, scaleFactor);
+                    scene.add(model);
+                });
+
+            } catch (err) {
+                console.error("An error occurred:", err);
+            }
+        }
+
+        initThreeJS();
+        loadClosestSightings();
+    };
+</script>
+
+</body>
+</html>
