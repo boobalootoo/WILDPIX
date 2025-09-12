@@ -1,0 +1,320 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <title>AR Species Locator</title>
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <style>
+        html, body {
+            height: 100%;
+            margin: 0;
+            overflow: hidden;
+            font-family: 'Helvetica Neue', Arial, Helvetica, sans-serif;
+            background-color: #000;
+        }
+        #camera-container {
+            width: 100%;
+            height: 100vh;
+            position: relative;
+            background: #222;
+            overflow: hidden;
+            display: flex;
+            justify-content: center;
+            align-items: center;
+        }
+        #camera-feed {
+            position: absolute;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 100%;
+            object-fit: cover;
+            z-index: 0;
+        }
+        #loading-message, #error-message {
+            position: absolute;
+            top: 50%;
+            left: 50%;
+            transform: translate(-50%, -50%);
+            z-index: 10;
+            background: rgba(0, 0, 0, 0.7);
+            padding: 10px;
+            border-radius: 5px;
+            color: white;
+            text-align: center;
+        }
+        #status-message {
+            position: absolute;
+            bottom: 150px; /* Adjusted position to not overlap with arrows */
+            left: 50%;
+            transform: translateX(-50%);
+            background: rgba(0, 0, 0, 0.6);
+            color: white;
+            padding: 8px 15px;
+            border-radius: 20px;
+            font-size: 14px;
+            z-index: 5;
+            transition: opacity 0.5s ease-in-out;
+            opacity: 0;
+        }
+        .status-visible {
+            opacity: 1;
+        }
+
+        #arrow-container {
+            position: absolute;
+            bottom: 20px;
+            width: 100%;
+            display: flex;
+            justify-content: center;
+            gap: 10px;
+            z-index: 10;
+        }
+        .directional-arrow {
+            width: 100px;
+            height: 100px;
+            display: none;
+            flex-direction: column;
+            align-items: center;
+            justify-content: center;
+            position: relative;
+            background: rgba(255, 255, 255, 0.8);
+            border-radius: 10px;
+            box-shadow: 0 4px 6px rgba(0, 0, 0, 0.1);
+        }
+        .arrow-body {
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            padding: 10px;
+            text-align: center;
+        }
+        .arrow-body img {
+            width: 50px;
+            height: 50px;
+            border-radius: 50%;
+            margin-bottom: 5px;
+            object-fit: cover;
+        }
+        .arrow-body .name {
+            font-size: 12px;
+            font-weight: bold;
+            color: #333;
+            margin-bottom: 2px;
+        }
+        .arrow-body .distance {
+            font-size: 10px;
+            color: #555;
+        }
+
+        .arrow-icon {
+            position: absolute;
+            top: -20px;
+            width: 30px;
+            height: 30px;
+            fill: #ff0000;
+        }
+    </style>
+</head>
+<body>
+    <div id="camera-container">
+        <video id="camera-feed" autoplay playsinline></video>
+        <div id="arrow-container">
+            <div class="directional-arrow" id="arrow-1"></div>
+            <div class="directional-arrow" id="arrow-2"></div>
+            <div class="directional-arrow" id="arrow-3"></div>
+        </div>
+        <div id="loading-message">Getting your location...</div>
+        <div id="error-message" style="display:none;"></div>
+        <div id="status-message"></div>
+    </div>
+    <script src="https://cdn.jsdelivr.net/npm/papaparse@5.4.1/papaparse.min.js"></script>
+    <script>
+        let currentLocation = null;
+        let deviceOrientation = { alpha: 0, beta: 0, gamma: 0 };
+        let speciesData = [];
+        const loadingMessage = document.getElementById('loading-message');
+        const errorMessage = document.getElementById('error-message');
+        const statusMessage = document.getElementById('status-message');
+        const arrows = [
+            document.getElementById('arrow-1'),
+            document.getElementById('arrow-2'),
+            document.getElementById('arrow-3')
+        ];
+
+        function getCardinalDirection(bearing) {
+            if (bearing >= 337.5 || bearing < 22.5) return 'N';
+            if (bearing >= 22.5 && bearing < 67.5) return 'NE';
+            if (bearing >= 67.5 && bearing < 112.5) return 'E';
+            if (bearing >= 112.5 && bearing < 157.5) return 'SE';
+            if (bearing >= 157.5 && bearing < 202.5) return 'S';
+            if (bearing >= 202.5 && bearing < 247.5) return 'SW';
+            if (bearing >= 247.5 && bearing < 292.5) return 'W';
+            if (bearing >= 292.5 && bearing < 337.5) return 'NW';
+            return '';
+        }
+
+        function calculateDistanceAndBearing(from, to) {
+            const R = 6378137;
+            const dLat = (to.lat - from.lat) * Math.PI / 180;
+            const dLon = (to.lon - from.lon) * Math.PI / 180;
+            
+            const a = Math.sin(dLat / 2) * Math.sin(dLat / 2) +
+                      Math.cos(from.lat * Math.PI / 180) * Math.cos(to.lat * Math.PI / 180) *
+                      Math.sin(dLon / 2) * Math.sin(dLon / 2);
+            const c = 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
+            const distance = R * c;
+
+            const y = Math.sin(dLon) * Math.cos(to.lat * Math.PI / 180);
+            const x = Math.cos(from.lat * Math.PI / 180) * Math.sin(to.lat * Math.PI / 180) -
+                      Math.sin(from.lat * Math.PI / 180) * Math.cos(to.lat * Math.PI / 180) * Math.cos(dLon);
+            const bearing = (Math.atan2(y, x) * 180 / Math.PI + 360) % 360;
+
+            const cardinalDirection = getCardinalDirection(bearing);
+            const relativeBearing = (bearing - deviceOrientation.alpha + 360) % 360;
+
+            return { distance, bearing, relativeBearing, cardinalDirection };
+        }
+
+        function animate() {
+            requestAnimationFrame(animate);
+
+            if (!currentLocation || speciesData.length === 0) {
+                return;
+            }
+
+            const sightingsWithData = [];
+            speciesData.forEach(row => {
+                const coords = row["example coords"];
+                const [lat, lon] = coords.split(',').map(Number);
+                const { distance, relativeBearing, cardinalDirection } = calculateDistanceAndBearing(
+                    { lat: currentLocation.latitude, lon: currentLocation.longitude },
+                    { lat, lon }
+                );
+                sightingsWithData.push({
+                    name: row["Common Name"],
+                    image: row["image"],
+                    distance,
+                    relativeBearing,
+                    cardinalDirection
+                });
+            });
+
+            sightingsWithData.sort((a, b) => a.distance - b.distance);
+            const closestSightings = sightingsWithData.slice(0, 3);
+            
+            console.clear();
+            console.log("Closest Species Sightings:");
+            if (closestSightings.length > 0) {
+                closestSightings.forEach(sighting => {
+                    console.log(`- ${sighting.name}: ${sighting.distance.toFixed(1)} m, ${sighting.cardinalDirection}`);
+                });
+            } else {
+                console.log("No species found nearby.");
+            }
+
+            arrows.forEach((arrow, index) => {
+                if (index < closestSightings.length) {
+                    const sighting = closestSightings[index];
+                    arrow.style.display = 'flex';
+                    
+                    const arrowSVG = `
+                        <svg class="arrow-icon" viewBox="0 0 24 24">
+                            <path d="M12 2 L12 22 M12 2 L6 8 M12 2 L18 8" stroke="#FFFFFF" stroke-width="2" fill="none"/>
+                        </svg>
+                    `;
+                    
+                    arrow.innerHTML = `
+                        ${arrowSVG}
+                        <div class="arrow-body">
+                            <img src="${sighting.image}" alt="${sighting.name}">
+                            <div class="name">${sighting.name}</div>
+                            <div class="distance">${sighting.distance.toFixed(1)} m ${sighting.cardinalDirection}</div>
+                        </div>
+                    `;
+                    
+                    // Rotate the arrow icon itself based on bearing
+                    const icon = arrow.querySelector('.arrow-icon');
+                    icon.style.transform = `rotate(${sighting.relativeBearing}deg)`;
+                } else {
+                    arrow.style.display = 'none';
+                }
+            });
+
+            if (closestSightings.length > 0) {
+                statusMessage.textContent = `Approaching ${closestSightings[0].name}, ${closestSightings[0].distance.toFixed(1)}m away.`;
+                statusMessage.classList.add('status-visible');
+            } else {
+                statusMessage.textContent = 'No species found nearby.';
+                statusMessage.classList.add('status-visible');
+            }
+        }
+
+        function initApp() {
+            // Get Camera Feed
+            if (navigator.mediaDevices && navigator.mediaDevices.getUserMedia) {
+                navigator.mediaDevices.getUserMedia({ video: { facingMode: 'environment' }, audio: false })
+                    .then(stream => { document.getElementById('camera-feed').srcObject = stream; })
+                    .catch(err => { 
+                        console.error("Error accessing camera: ", err); 
+                        errorMessage.style.display = 'block';
+                        errorMessage.textContent = 'Camera access denied. Please check your browser settings.';
+                        loadingMessage.style.display = 'none';
+                    });
+            } else {
+                errorMessage.style.display = 'block';
+                errorMessage.textContent = 'Camera is not supported on this device.';
+                loadingMessage.style.display = 'none';
+            }
+
+            // Get Geolocation
+            navigator.geolocation.watchPosition(
+                (position) => {
+                    currentLocation = position.coords;
+                    loadingMessage.textContent = 'Location found. Finding sightings...';
+                    console.log(`Current Location: Lat: ${currentLocation.latitude}, Lon: ${currentLocation.longitude}`);
+                },
+                (error) => {
+                    console.error("Geolocation error:", error);
+                    errorMessage.style.display = 'block';
+                    errorMessage.textContent = 'Geolocation failed. Please enable location services.';
+                    loadingMessage.style.display = 'none';
+                },
+                { enableHighAccuracy: true, maximumAge: 0, timeout: 5000 }
+            );
+
+            // Get Device Orientation
+            window.addEventListener('deviceorientation', (e) => {
+                if (e.webkitCompassHeading) {
+                    deviceOrientation.alpha = e.webkitCompassHeading;
+                } else if (e.alpha !== null) {
+                    deviceOrientation.alpha = 360 - e.alpha;
+                }
+            });
+
+            // Load species data from CSV
+            const csvUrl = "https://raw.githubusercontent.com/boobalootoo/WILDPIX/main/cardinfo.csv";
+            Papa.parse(csvUrl, {
+                download: true,
+                header: true,
+                complete: function(results) {
+                    speciesData = results.data.filter(row => row["example coords"] && row["image"] && row["Common Name"]);
+                    console.log(`Loaded ${speciesData.length} species sightings from CSV.`);
+                    loadingMessage.style.display = 'none';
+                },
+                error: (err) => {
+                    console.error("Error loading CSV:", err);
+                    errorMessage.style.display = 'block';
+                    errorMessage.textContent = 'Failed to load species data.';
+                    loadingMessage.style.display = 'none';
+                }
+            });
+
+            // Start the animation loop
+            animate();
+        }
+
+        window.onload = initApp;
+    </script>
+</body>
+</html>
