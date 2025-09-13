@@ -1,0 +1,625 @@
+
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Combined Pages</title>
+    <style>
+        body, html {
+            margin: 0;
+            padding: 0;
+            height: 100%;
+            overflow: hidden;
+            font-family: sans-serif;
+        }
+        .combined-container {
+            display: flex;
+            flex-direction: column;
+            height: 100vh;
+        }
+        .page-container {
+            width: 100%;
+            overflow: auto;
+        }
+        .resizer {
+            height: 10px;
+            background-color: #a0a0a0;
+            cursor: ns-resize;
+            touch-action: none;
+        }
+        iframe {
+            width: 100%;
+            height: 100%;
+            border: none;
+        }
+    </style>
+</head>
+<body>
+    <div class="combined-container">
+        <div id="page1" class="page-container" style="flex-grow: 1;">
+            <iframe srcdoc="&lt;!DOCTYPE html&gt;
+&lt;html lang=&quot;en&quot;&gt;
+
+&lt;head&gt;
+  &lt;meta charset=&quot;UTF-8&quot;&gt;
+  &lt;meta name=&quot;viewport&quot; content=&quot;width=device-width, initial-scale=1.0&quot;&gt;
+  &lt;title&gt;Closest Sightings 3D Viewer&lt;/title&gt;
+  &lt;script src=&quot;https://cdn.tailwindcss.com&quot;&gt;&lt;/script&gt;
+  &lt;style&gt;
+    body {
+      margin: 0;
+      overflow: hidden;
+      font-family: &#039;Inter&#039;, sans-serif;
+    }
+
+    #camera-feed {
+      position: absolute;
+      top: 0;
+      left: 0;
+      width: 100%;
+      height: 100%;
+      object-fit: cover;
+      z-index: 0;
+    }
+
+    #viewer-canvas {
+      position: absolute;
+      top: 0;
+      left: 0;
+      width: 100%;
+      height: 100%;
+      z-index: 1;
+    }
+
+    #controls-ui {
+      position: absolute;
+      top: 10px;
+      left: 50%;
+      transform: translateX(-50%);
+      display: flex;
+      gap: 8px;
+      z-index: 2;
+      flex-wrap: wrap;
+    }
+
+    #controls-ui button {
+      padding: 8px 12px;
+      background: rgba(0, 0, 0, 0.4);
+      color: white;
+      border: none;
+      border-radius: 6px;
+      font-size: 13px;
+      cursor: pointer;
+      transition: background 0.2s;
+    }
+
+    #controls-ui button:hover {
+      background: rgba(0, 150, 255, 0.6);
+    }
+
+    #controls-ui button.active {
+      background: rgba(0, 150, 255, 0.8);
+    }
+  &lt;/style&gt;
+&lt;/head&gt;
+
+&lt;body&gt;
+  &lt;video id=&quot;camera-feed&quot; autoplay playsinline muted&gt;&lt;/video&gt;
+  &lt;canvas id=&quot;viewer-canvas&quot;&gt;&lt;/canvas&gt;
+
+  &lt;!-- Transform mode buttons --&gt;
+  &lt;div id=&quot;controls-ui&quot;&gt;
+    &lt;button id=&quot;move-btn&quot; class=&quot;active&quot;&gt;Move&lt;/button&gt;
+    &lt;button id=&quot;rotate-btn&quot;&gt;Rotate&lt;/button&gt;
+    &lt;button id=&quot;scale-btn&quot;&gt;Scale&lt;/button&gt;
+  &lt;/div&gt;
+
+  &lt;script src=&quot;https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js&quot;&gt;&lt;/script&gt;
+  &lt;script src=&quot;https://cdn.jsdelivr.net/npm/three@0.128.0/examples/js/loaders/GLTFLoader.js&quot;&gt;&lt;/script&gt;
+  &lt;script src=&quot;https://cdn.jsdelivr.net/npm/three@0.128.0/examples/js/controls/OrbitControls.js&quot;&gt;&lt;/script&gt;
+  &lt;script src=&quot;https://cdn.jsdelivr.net/npm/three@0.128.0/examples/js/controls/TransformControls.js&quot;&gt;&lt;/script&gt;
+
+  &lt;script&gt;
+    const CSV_URL = &#039;https://raw.githubusercontent.com/boobalootoo/WILDPIX/main/cardinfo.csv&#039;;
+    const canvas = document.getElementById(&#039;viewer-canvas&#039;);
+    const video = document.getElementById(&#039;camera-feed&#039;);
+
+    // --- Camera feed ---
+    if (navigator.mediaDevices &amp;&amp; navigator.mediaDevices.getUserMedia) {
+      navigator.mediaDevices.getUserMedia({ video: { facingMode: &quot;environment&quot; } })
+        .then(stream =&gt; video.srcObject = stream)
+        .catch(err =&gt; console.error(&quot;Camera error:&quot;, err));
+    }
+
+    // --- Three.js setup ---
+    const scene = new THREE.Scene();
+    const camera = new THREE.PerspectiveCamera(75, window.innerWidth / window.innerHeight, 0.1, 1000);
+    camera.position.set(0, 2, 10);
+
+    const renderer = new THREE.WebGLRenderer({ canvas, alpha: true });
+    renderer.setSize(window.innerWidth, window.innerHeight);
+
+    const orbitControls = new THREE.OrbitControls(camera, renderer.domElement);
+    orbitControls.enableDamping = true;
+    orbitControls.dampingFactor = 0.25;
+
+    const ambientLight = new THREE.AmbientLight(0xffffff, 0.5);
+    scene.add(ambientLight);
+    const directionalLight = new THREE.DirectionalLight(0xffffff, 0.5);
+    directionalLight.position.set(5, 10, 7.5);
+    scene.add(directionalLight);
+
+    const loader = new THREE.GLTFLoader();
+    const transformControls = new THREE.TransformControls(camera, renderer.domElement);
+    scene.add(transformControls);
+
+    transformControls.addEventListener(&#039;dragging-changed&#039;, (event) =&gt; {
+      orbitControls.enabled = !event.value;
+    });
+
+    const loadedModels = [];
+    const raycaster = new THREE.Raycaster();
+
+    // --- CSV parsing &amp; distance ---
+    function parseCSV(text) {
+      if (!text) return [];
+      if (text.charCodeAt(0) === 0xFEFF) text = text.slice(1);
+      const rows = [];
+      let cur = &#039;&#039;, row = [], inQuotes = false;
+      for (let i = 0; i &lt; text.length; i++) {
+        const ch = text[i], next = text[i + 1];
+        if (ch === &#039;&quot;&#039;) {
+          if (inQuotes &amp;&amp; next === &#039;&quot;&#039;) { cur += &#039;&quot;&#039;; i++; continue; }
+          inQuotes = !inQuotes; continue;
+        }
+        if (ch === &#039;,&#039; &amp;&amp; !inQuotes) { row.push(cur); cur = &#039;&#039;; continue; }
+        if ((ch === &#039;\n&#039; || ch === &#039;\r&#039;) &amp;&amp; !inQuotes) {
+          if (ch === &#039;\r&#039; &amp;&amp; text[i + 1] === &#039;\n&#039;) i++;
+          row.push(cur); rows.push(row); row = []; cur = &#039;&#039;; continue;
+        }
+        cur += ch;
+      }
+      row.push(cur);
+      if (!(row.length === 1 &amp;&amp; row[0] === &#039;&#039;)) rows.push(row);
+      return rows.map(r =&gt; r.map(cell =&gt;
+        (cell.startsWith(&#039;&quot;&#039;) &amp;&amp; cell.endsWith(&#039;&quot;&#039;)) ? cell.slice(1, -1).replace(/&quot;&quot;/g, &#039;&quot;&#039;) : cell
+      ));
+    }
+
+    function distance(lat1, lon1, lat2, lon2) {
+      const R = 6371;
+      const dLat = (lat2 - lat1) * Math.PI / 180;
+      const dLon = (lon2 - lon1) * Math.PI / 180;
+      const a = Math.sin(dLat / 2) ** 2 +
+        Math.cos(lat1 * Math.PI / 180) * Math.cos(lat2 * Math.PI / 180) *
+        Math.sin(dLon / 2) ** 2;
+      return R * 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
+    }
+
+    function convertGithubUrl(url) {
+      if (url.includes(&#039;github.com&#039;) &amp;&amp; url.includes(&#039;/blob/&#039;)) {
+        return url.replace(&#039;github.com&#039;, &#039;raw.githubusercontent.com&#039;).replace(&#039;/blob/&#039;, &#039;/&#039;);
+      }
+      return url;
+    }
+
+    // --- Load closest sightings ---
+    async function loadClosestSightings() {
+      try {
+        const pos = await new Promise((resolve, reject) =&gt; {
+          if (!navigator.geolocation) return reject(&quot;Geolocation not supported&quot;);
+          navigator.geolocation.getCurrentPosition(resolve, reject);
+        });
+        const myLat = pos.coords.latitude;
+        const myLon = pos.coords.longitude;
+
+        const res = await fetch(CSV_URL);
+        const text = await res.text();
+        const rows = parseCSV(text);
+        const data = rows.slice(1);
+
+        const withDistances = data.map(r =&gt; {
+          let lat = NaN, lon = NaN;
+          try { const parts = r[3].split(&#039;,&#039;); lat = parseFloat(parts[0]); lon = parseFloat(parts[1]); } catch { }
+          const dist = isNaN(lat) || isNaN(lon) ? Infinity : distance(myLat, myLon, lat, lon);
+          return { row: r, dist };
+        });
+
+        const closest = withDistances.sort((a, b) =&gt; a.dist - b.dist).slice(0, 3);
+        const modelUrls = closest.map(item =&gt; item.row[2]);
+
+        modelUrls.forEach((url, i) =&gt; {
+          loader.load(convertGithubUrl(url), gltf =&gt; {
+            const model = gltf.scene;
+            model.position.set(i * 4 - 4, 0, 0);
+            const box = new THREE.Box3().setFromObject(model);
+            const size = box.getSize(new THREE.Vector3());
+            const scale = 2 / Math.max(size.x, size.y, size.z);
+            model.scale.set(scale, scale, scale);
+            scene.add(model);
+            loadedModels.push(model);
+          }, undefined, err =&gt; console.error(err));
+        });
+      } catch (err) {
+        console.error(err);
+      }
+    }
+
+    // --- Select model on click/touch ---
+    function selectModel(clientX, clientY) {
+      const mouse = new THREE.Vector2();
+      mouse.x = (clientX / window.innerWidth) * 2 - 1;
+      mouse.y = -(clientY / window.innerHeight) * 2 + 1;
+      raycaster.setFromCamera(mouse, camera);
+      const intersects = raycaster.intersectObjects(loadedModels, true);
+      if (intersects.length &gt; 0) {
+        let root = intersects[0].object;
+        while (root.parent &amp;&amp; !loadedModels.includes(root)) root = root.parent;
+        transformControls.attach(root);
+      }
+    }
+
+    window.addEventListener(&#039;click&#039;, (event) =&gt; selectModel(event.clientX, event.clientY));
+    window.addEventListener(&#039;touchstart&#039;, (event) =&gt; {
+      if (event.touches.length &gt; 0) {
+        const touch = event.touches[0];
+        selectModel(touch.clientX, touch.clientY);
+      }
+    });
+
+    // --- Transform mode buttons ---
+    const moveBtn = document.getElementById(&#039;move-btn&#039;);
+    const rotateBtn = document.getElementById(&#039;rotate-btn&#039;);
+    const scaleBtn = document.getElementById(&#039;scale-btn&#039;);
+
+    function setMode(mode) {
+      transformControls.setMode(mode);
+      moveBtn.classList.remove(&#039;active&#039;);
+      rotateBtn.classList.remove(&#039;active&#039;);
+      scaleBtn.classList.remove(&#039;active&#039;);
+      if (mode === &#039;translate&#039;) moveBtn.classList.add(&#039;active&#039;);
+      if (mode === &#039;rotate&#039;) rotateBtn.classList.add(&#039;active&#039;);
+      if (mode === &#039;scale&#039;) scaleBtn.classList.add(&#039;active&#039;);
+    }
+
+    moveBtn.onclick = () =&gt; setMode(&#039;translate&#039;);
+    rotateBtn.onclick = () =&gt; setMode(&#039;rotate&#039;);
+    scaleBtn.onclick = () =&gt; setMode(&#039;scale&#039;);
+    setMode(&#039;translate&#039;);
+
+    // --- Animate ---
+    function animate() {
+      requestAnimationFrame(animate);
+      orbitControls.update();
+      renderer.render(scene, camera);
+    }
+
+    window.addEventListener(&#039;resize&#039;, () =&gt; {
+      camera.aspect = window.innerWidth / window.innerHeight;
+      camera.updateProjectionMatrix();
+      renderer.setSize(window.innerWidth, window.innerHeight);
+    });
+
+    loadClosestSightings();
+    animate();
+  &lt;/script&gt;
+&lt;/body&gt;
+&lt;/html&gt;
+"></iframe>
+        </div>
+        <div id="resizer" class="resizer"></div>
+        <div id="page2" class="page-container" style="flex-grow: 1;">
+            <iframe srcdoc="&lt;!DOCTYPE html&gt;
+&lt;html lang=&quot;en&quot;&gt;
+&lt;head&gt;
+    &lt;meta charset=&quot;UTF-8&quot;&gt;
+    &lt;title&gt;Species Sightings Map&lt;/title&gt;
+    &lt;meta name=&quot;viewport&quot; content=&quot;width=device-width, initial-scale=1.0&quot;&gt;
+
+    &lt;!-- Leaflet CSS --&gt;
+    &lt;link rel=&quot;stylesheet&quot; href=&quot;https://unpkg.com/leaflet@1.9.4/dist/leaflet.css&quot;/&gt;
+    &lt;link rel=&quot;stylesheet&quot; href=&quot;https://unpkg.com/leaflet.markercluster@1.5.3/dist/MarkerCluster.css&quot;/&gt;
+    &lt;link rel=&quot;stylesheet&quot; href=&quot;https://unpkg.com/leaflet.markercluster@1.5.3/dist/MarkerCluster.Default.css&quot;/&gt;
+
+    &lt;style&gt;
+        #map { width: 100%; height: 100vh; }
+        .popup-gallery { text-align: center; }
+        .popup-gallery img { max-width: 150px; border-radius: 8px; }
+        .popup-gallery button {
+            margin: 5px;
+            padding: 4px 8px;
+            border: none;
+            border-radius: 4px;
+            cursor: pointer;
+            background: #0078d7;
+            color: white;
+        }
+        .compass {
+            margin-top: 8px;
+            font-size: 14px;
+            font-weight: bold;
+            color: #222;
+        }
+        /* New custom marker styles */
+        .my-location-icon {
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            position: relative;
+            width: 50px;
+            height: 50px;
+        }
+        .my-location-icon .smiley {
+            position: absolute;
+            width: 50px; /* Adjusted size to be the main marker */
+            height: 50px;
+            z-index: 1; /* Ensure smiley is below the hand */
+        }
+        .my-location-icon .hands {
+            position: absolute;
+            width: 25px; /* Half the width of the smiley */
+            height: 25px;
+            transform-origin: center bottom; /* Rotate from the bottom of the image */
+            top: -12.5px; /* Adjust vertical position to sit on top edge of smiley */
+            z-index: 2; /* Ensure hands are on top of the smiley */
+        }
+    &lt;/style&gt;
+&lt;/head&gt;
+&lt;body&gt;
+    &lt;div id=&quot;map&quot;&gt;&lt;/div&gt;
+
+    &lt;!-- JS libraries --&gt;
+    &lt;script src=&quot;https://unpkg.com/leaflet@1.9.4/dist/leaflet.js&quot;&gt;&lt;/script&gt;
+    &lt;script src=&quot;https://unpkg.com/leaflet.markercluster@1.5.3/dist/leaflet.markercluster.js&quot;&gt;&lt;/script&gt;
+    &lt;script src=&quot;https://cdn.jsdelivr.net/npm/papaparse@5.4.1/papaparse.min.js&quot;&gt;&lt;/script&gt;
+
+    &lt;script&gt;
+        // Init map
+        const map = L.map(&#039;map&#039;).setView([54.5, -3], 6);
+
+        // Satellite basemap
+        L.tileLayer(
+            &#039;https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}&#039;, 
+            {
+                attribution: &#039;Tiles © Esri — Source: Esri, Maxar, Earthstar Geographics&#039;,
+                maxNativeZoom: 18,
+                maxZoom: 26 
+            }
+        ).addTo(map);
+
+        // Marker cluster group
+        const markers = L.markerClusterGroup();
+        map.addLayer(markers);
+
+        // --- Current location marker ---
+        let locationMarker = null;
+        let currentLocation = null;
+        let directionHand = null;
+
+        // Custom div icon for the user&#039;s location
+        const myLocationIcon = L.divIcon({
+            className: &#039;my-location-icon&#039;,
+            html: `
+                &lt;img class=&quot;smiley&quot; src=&quot;https://raw.githubusercontent.com/boobalootoo/WILDPIX/main/XPLOR/MAPME/smilez.png&quot; alt=&quot;Smiley face&quot;&gt;
+                &lt;img class=&quot;hands&quot; src=&quot;https://raw.githubusercontent.com/boobalootoo/WILDPIX/main/XPLOR/MAPME/hands.png&quot; alt=&quot;Directional hand&quot;&gt;
+            `,
+            iconSize: [50, 50],
+            iconAnchor: [25, 25],
+            popupAnchor: [0, -25]
+        });
+
+        map.locate({ setView: true, maxZoom: 16, watch: true });
+
+        function onLocationFound(e) {
+            currentLocation = e.latlng;
+            if (locationMarker) {
+                locationMarker.setLatLng(e.latlng);
+            } else {
+                locationMarker = L.marker(e.latlng, {
+                    icon: myLocationIcon
+                }).addTo(map).bindPopup(&quot;📍 You are here&quot;);
+                directionHand = locationMarker._icon.querySelector(&#039;.hands&#039;);
+            }
+
+            refreshAllPopups();
+        }
+
+        function onLocationError(e) {
+            console.warn(&quot;Location not found: &quot; + e.message);
+        }
+
+        map.on(&quot;locationfound&quot;, onLocationFound);
+        map.on(&quot;locationerror&quot;, onLocationError);
+
+        // --- Device orientation for compass ---
+        window.addEventListener(&#039;deviceorientation&#039;, function(e) {
+            if (e.webkitCompassHeading) {
+                // iOS
+                const heading = e.webkitCompassHeading;
+                if (directionHand) {
+                    directionHand.style.transform = `rotate(${90 - heading}deg)`;
+                }
+            } else if (e.alpha !== null) {
+                // Android/Others
+                const alpha = e.alpha;
+                if (directionHand) {
+                    directionHand.style.transform = `rotate(${90 + (360 - alpha)}deg)`;
+                }
+            }
+        });
+
+        // --- Utility: calculate NS/EW offset ---
+        function calculateOffset(from, to) {
+            if (!from) return &quot;Waiting for GPS...&quot;;
+            const R = 6378137; // Earth radius in metres
+
+            const dLat = (to.lat - from.lat) * Math.PI/180;
+            const dLon = (to.lng - from.lng) * Math.PI/180;
+
+            const northMetres = dLat * R; 
+            const eastMetres = dLon * R * Math.cos(from.lat * Math.PI/180);
+
+            const ns = northMetres &gt;= 0 ? &quot;N&quot; : &quot;S&quot;;
+            const ew = eastMetres &gt;= 0 ? &quot;E&quot; : &quot;W&quot;;
+
+            return `${Math.abs(northMetres).toFixed(1)} m ${ns}, ${Math.abs(eastMetres).toFixed(1)} m ${ew}`;
+        }
+
+        // --- Load CSV ---
+        const csvUrl = &quot;https://raw.githubusercontent.com/boobalootoo/WILDPIX/main/cardinfo.csv&quot;;
+
+        Papa.parse(csvUrl, {
+            download: true,
+            header: true,
+            complete: function(results) {
+                const grouped = {};
+
+                results.data.forEach(row =&gt; {
+                    if (row[&quot;example coords&quot;] &amp;&amp; row[&quot;image&quot;]) {
+                        const coords = row[&quot;example coords&quot;].trim();
+                        const parts = coords.split(&quot;,&quot;);
+                        if (parts.length === 2) {
+                            const lat = parseFloat(parts[0].trim());
+                            const lon = parseFloat(parts[1].trim());
+
+                            if (!isNaN(lat) &amp;&amp; !isNaN(lon)) {
+                                const key = `${lat},${lon}`;
+                                if (!grouped[key]) grouped[key] = [];
+                                grouped[key].push({
+                                    name: row[&quot;Common Name&quot;] || &quot;Unknown species&quot;,
+                                    image: row[&quot;image&quot;],
+                                    lat, lon
+                                });
+                            }
+                        }
+                    }
+                });
+
+                // Place markers
+                Object.keys(grouped).forEach(key =&gt; {
+                    const [lat, lon] = key.split(&quot;,&quot;).map(Number);
+                    const entries = grouped[key];
+
+                    const icon = L.icon({
+                        iconUrl: entries[0].image,
+                        iconSize: [40, 40],
+                        className: &#039;species-icon&#039;
+                    });
+
+                    const marker = L.marker([lat, lon], { icon });
+
+                    let index = 0;
+                    function getPopupContent() {
+                        const e = entries[index];
+                        const offsetText = calculateOffset(currentLocation, {lat:e.lat, lng:e.lon});
+                        return `
+                            &lt;div class=&quot;popup-gallery&quot;&gt;
+                                &lt;strong&gt;${e.name}&lt;/strong&gt;&lt;br&gt;
+                                &lt;img src=&quot;${e.image}&quot; alt=&quot;${e.name}&quot;&gt;&lt;br&gt;
+                                &lt;button onclick=&quot;prevImage(&#039;${key}&#039;)&quot;&gt;&amp;lt; Prev&lt;/button&gt;
+                                &lt;button onclick=&quot;nextImage(&#039;${key}&#039;)&quot;&gt;Next &amp;gt;&lt;/button&gt;
+                                &lt;p&gt;${index + 1} / ${entries.length}&lt;/p&gt;
+                                &lt;div class=&quot;compass&quot;&gt;📏 ${offsetText}&lt;/div&gt;
+                            &lt;/div&gt;
+                        `;
+                    }
+
+                    marker.bindPopup(getPopupContent);
+
+                    marker._galleryData = { entries, index, getPopupContent };
+
+                    markers.addLayer(marker);
+                });
+            }
+        });
+
+        // --- Refresh all open popups when location updates ---
+        function refreshAllPopups() {
+            markers.eachLayer(marker =&gt; {
+                if (marker._popup &amp;&amp; marker.isPopupOpen() &amp;&amp; marker._galleryData) {
+                    marker.setPopupContent(marker._galleryData.getPopupContent());
+                }
+            });
+        }
+
+        // --- Gallery navigation ---
+        window.prevImage = function(key) {
+            markers.eachLayer(marker =&gt; {
+                if (marker._galleryData &amp;&amp; marker.getLatLng().toString() === `LatLng(${key})`) {
+                    const data = marker._galleryData;
+                    data.index = (data.index - 1 + data.entries.length) % data.entries.length;
+                    marker.setPopupContent(data.getPopupContent());
+                }
+            });
+        };
+
+        window.nextImage = function(key) {
+            markers.eachLayer(marker =&gt; {
+                if (marker._galleryData &amp;&amp; marker.getLatLng().toString() === `LatLng(${key})`) {
+                    const data = marker._galleryData;
+                    data.index = (data.index + 1) % data.entries.length;
+                    marker.setPopupContent(data.getPopupContent());
+                }
+            });
+        };
+    &lt;/script&gt;
+&lt;/body&gt;
+&lt;/html&gt;
+"></iframe>
+        </div>
+    </div>
+    <script>
+        const resizer = document.getElementById('resizer');
+        const page1 = document.getElementById('page1');
+        const page2 = document.getElementById('page2');
+        let isResizing = false;
+
+        resizer.addEventListener('mousedown', (e) => {
+            isResizing = true;
+            document.body.style.cursor = 'ns-resize';
+            e.preventDefault();
+        });
+        resizer.addEventListener('touchstart', (e) => {
+            isResizing = true;
+            e.preventDefault();
+        });
+
+        document.addEventListener('mousemove', (e) => {
+            if (!isResizing) return;
+            const totalHeight = window.innerHeight;
+            const topHeight = e.clientY;
+            const bottomHeight = totalHeight - topHeight - resizer.offsetHeight;
+
+            if (topHeight > 50 && bottomHeight > 50) {
+                page1.style.height = `${topHeight}px`;
+                page2.style.height = `${bottomHeight}px`;
+                page1.style.flexGrow = '0';
+                page2.style.flexGrow = '0';
+            }
+        });
+        document.addEventListener('touchmove', (e) => {
+            if (!isResizing) return;
+            const totalHeight = window.innerHeight;
+            const topHeight = e.touches[0].clientY;
+            const bottomHeight = totalHeight - topHeight - resizer.offsetHeight;
+
+            if (topHeight > 50 && bottomHeight > 50) {
+                page1.style.height = `${topHeight}px`;
+                page2.style.height = `${bottomHeight}px`;
+                page1.style.flexGrow = '0';
+                page2.style.flexGrow = '0';
+            }
+        });
+
+        document.addEventListener('mouseup', () => {
+            isResizing = false;
+            document.body.style.cursor = '';
+        });
+        document.addEventListener('touchend', () => {
+            isResizing = false;
+        });
+    </script>
+</body>
+</html>
+            
