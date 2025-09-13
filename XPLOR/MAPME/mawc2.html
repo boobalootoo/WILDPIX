@@ -1,0 +1,282 @@
+<!DOCTYPE html>
+<html lang="en">
+
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Closest Sightings 3D Viewer</title>
+  <script src="https://cdn.tailwindcss.com"></script>
+  <style>
+    body {
+      margin: 0;
+      overflow: hidden;
+      font-family: 'Inter', sans-serif;
+    }
+
+    #camera-feed {
+      position: absolute;
+      top: 0;
+      left: 0;
+      width: 100%;
+      height: 100%;
+      object-fit: cover;
+      z-index: 0;
+    }
+
+    #viewer-canvas {
+      position: absolute;
+      top: 0;
+      left: 0;
+      width: 100%;
+      height: 100%;
+      z-index: 1;
+    }
+
+    #controls-ui {
+      position: absolute;
+      top: 10px;
+      left: 50%;
+      transform: translateX(-50%);
+      display: flex;
+      gap: 8px;
+      z-index: 2;
+      flex-wrap: wrap;
+    }
+
+    #controls-ui button {
+      padding: 8px 12px;
+      background: rgba(0, 0, 0, 0.4);
+      color: white;
+      border: none;
+      border-radius: 6px;
+      font-size: 13px;
+      cursor: pointer;
+      transition: background 0.2s;
+    }
+
+    #controls-ui button:hover {
+      background: rgba(0, 150, 255, 0.6);
+    }
+
+    #controls-ui button.active {
+      background: rgba(0, 150, 255, 0.8);
+    }
+  </style>
+</head>
+
+<body>
+  <video id="camera-feed" autoplay playsinline muted></video>
+  <canvas id="viewer-canvas"></canvas>
+
+  <!-- Transform mode buttons -->
+  <div id="controls-ui">
+    <button id="move-btn" class="active">Move</button>
+    <button id="rotate-btn">Rotate</button>
+    <button id="scale-btn">Scale</button>
+  </div>
+
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/three@0.128.0/examples/js/loaders/GLTFLoader.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/three@0.128.0/examples/js/controls/OrbitControls.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/three@0.128.0/examples/js/controls/TransformControls.js"></script>
+
+  <script>
+    const CSV_URL = 'https://raw.githubusercontent.com/boobalootoo/WILDPIX/main/cardinfo.csv';
+    const canvas = document.getElementById('viewer-canvas');
+    const video = document.getElementById('camera-feed');
+
+    // --- Camera feed ---
+    if (navigator.mediaDevices && navigator.mediaDevices.getUserMedia) {
+      navigator.mediaDevices.getUserMedia({ video: { facingMode: "environment" } })
+        .then(stream => video.srcObject = stream)
+        .catch(err => console.error("Camera error:", err));
+    }
+
+    // --- Three.js setup ---
+    const scene = new THREE.Scene();
+    const camera = new THREE.PerspectiveCamera(75, window.innerWidth / window.innerHeight, 0.1, 1000);
+    camera.position.set(0, 2, 10);
+
+    const renderer = new THREE.WebGLRenderer({ canvas, alpha: true });
+    renderer.setSize(window.innerWidth, window.innerHeight);
+
+    const orbitControls = new THREE.OrbitControls(camera, renderer.domElement);
+    orbitControls.enableDamping = true;
+    orbitControls.dampingFactor = 0.25;
+
+    const ambientLight = new THREE.AmbientLight(0xffffff, 0.5);
+    scene.add(ambientLight);
+    const directionalLight = new THREE.DirectionalLight(0xffffff, 0.5);
+    directionalLight.position.set(5, 10, 7.5);
+    scene.add(directionalLight);
+
+    const loader = new THREE.GLTFLoader();
+    const transformControls = new THREE.TransformControls(camera, renderer.domElement);
+    scene.add(transformControls);
+
+    transformControls.addEventListener('dragging-changed', (event) => {
+      orbitControls.enabled = !event.value;
+    });
+
+    const loadedModels = [];
+    const raycaster = new THREE.Raycaster();
+
+    // --- CSV parsing & distance ---
+    function parseCSV(text) {
+      if (!text) return [];
+      if (text.charCodeAt(0) === 0xFEFF) text = text.slice(1);
+      const rows = [];
+      let cur = '', row = [], inQuotes = false;
+      for (let i = 0; i < text.length; i++) {
+        const ch = text[i], next = text[i + 1];
+        if (ch === '"') {
+          if (inQuotes && next === '"') { cur += '"'; i++; continue; }
+          inQuotes = !inQuotes; continue;
+        }
+        if (ch === ',' && !inQuotes) { row.push(cur); cur = ''; continue; }
+        if ((ch === '\n' || ch === '\r') && !inQuotes) {
+          if (ch === '\r' && text[i + 1] === '\n') i++;
+          row.push(cur); rows.push(row); row = []; cur = ''; continue;
+        }
+        cur += ch;
+      }
+      row.push(cur);
+      if (!(row.length === 1 && row[0] === '')) rows.push(row);
+      return rows.map(r => r.map(cell =>
+        (cell.startsWith('"') && cell.endsWith('"')) ? cell.slice(1, -1).replace(/""/g, '"') : cell
+      ));
+    }
+
+    function distance(lat1, lon1, lat2, lon2) {
+      const R = 6371;
+      const dLat = (lat2 - lat1) * Math.PI / 180;
+      const dLon = (lon2 - lon1) * Math.PI / 180;
+      const a = Math.sin(dLat / 2) ** 2 +
+        Math.cos(lat1 * Math.PI / 180) * Math.cos(lat2 * Math.PI / 180) *
+        Math.sin(dLon / 2) ** 2;
+      return R * 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
+    }
+
+    function convertGithubUrl(url) {
+      if (url.includes('github.com') && url.includes('/blob/')) {
+        return url.replace('github.com', 'raw.githubusercontent.com').replace('/blob/', '/');
+      }
+      return url;
+    }
+
+    // --- Load closest sightings ---
+    async function loadClosestSightings() {
+      try {
+        const pos = await new Promise((resolve, reject) => {
+          if (!navigator.geolocation) return reject("Geolocation not supported");
+          navigator.geolocation.getCurrentPosition(resolve, reject);
+        });
+        const myLat = pos.coords.latitude;
+        const myLon = pos.coords.longitude;
+
+        const res = await fetch(CSV_URL);
+        const text = await res.text();
+        const rows = parseCSV(text);
+        const data = rows.slice(1);
+
+        const withDistances = data.map(r => {
+          let lat = NaN, lon = NaN;
+          try { const parts = r[3].split(','); lat = parseFloat(parts[0]); lon = parseFloat(parts[1]); } catch { }
+          const dist = isNaN(lat) || isNaN(lon) ? Infinity : distance(myLat, myLon, lat, lon);
+          return { row: r, dist };
+        });
+
+        const closest = withDistances.sort((a, b) => a.dist - b.dist).slice(0, 3);
+        const modelUrls = closest.map(item => item.row[2]);
+
+        modelUrls.forEach((url, i) => {
+          loader.load(convertGithubUrl(url), gltf => {
+            const model = gltf.scene;
+            model.position.set(i * 4 - 4, 0, 0);
+            const box = new THREE.Box3().setFromObject(model);
+            const size = box.getSize(new THREE.Vector3());
+            const scale = 2 / Math.max(size.x, size.y, size.z);
+            model.scale.set(scale, scale, scale);
+            scene.add(model);
+            loadedModels.push(model);
+          }, undefined, err => console.error(err));
+        });
+      } catch (err) {
+        console.error(err);
+      }
+    }
+
+    // --- Select or unselect model on click/touch ---
+    function selectModel(clientX, clientY) {
+      const mouse = new THREE.Vector2();
+      mouse.x = (clientX / window.innerWidth) * 2 - 1;
+      mouse.y = -(clientY / window.innerHeight) * 2 + 1;
+      raycaster.setFromCamera(mouse, camera);
+      const intersects = raycaster.intersectObjects(loadedModels, true);
+
+      if (intersects.length > 0) {
+        let root = intersects[0].object;
+        // Find the top-level parent that is a loaded model
+        while (root.parent && !loadedModels.includes(root)) {
+          root = root.parent;
+        }
+
+        // If the clicked model is already selected, unselect it
+        if (transformControls.object === root) {
+          transformControls.detach();
+        } else {
+          // Otherwise, attach to the new model
+          transformControls.attach(root);
+        }
+      } else {
+        // If no model is clicked, unselect the current model
+        transformControls.detach();
+      }
+    }
+
+    window.addEventListener('click', (event) => selectModel(event.clientX, event.clientY));
+    window.addEventListener('touchstart', (event) => {
+      if (event.touches.length > 0) {
+        const touch = event.touches[0];
+        selectModel(touch.clientX, touch.clientY);
+      }
+    });
+
+    // --- Transform mode buttons ---
+    const moveBtn = document.getElementById('move-btn');
+    const rotateBtn = document.getElementById('rotate-btn');
+    const scaleBtn = document.getElementById('scale-btn');
+
+    function setMode(mode) {
+      transformControls.setMode(mode);
+      moveBtn.classList.remove('active');
+      rotateBtn.classList.remove('active');
+      scaleBtn.classList.remove('active');
+      if (mode === 'translate') moveBtn.classList.add('active');
+      if (mode === 'rotate') rotateBtn.classList.add('active');
+      if (mode === 'scale') scaleBtn.classList.add('active');
+    }
+
+    moveBtn.onclick = () => setMode('translate');
+    rotateBtn.onclick = () => setMode('rotate');
+    scaleBtn.onclick = () => setMode('scale');
+    setMode('translate');
+
+    // --- Animate ---
+    function animate() {
+      requestAnimationFrame(animate);
+      orbitControls.update();
+      renderer.render(scene, camera);
+    }
+
+    window.addEventListener('resize', () => {
+      camera.aspect = window.innerWidth / window.innerHeight;
+      camera.updateProjectionMatrix();
+      renderer.setSize(window.innerWidth, window.innerHeight);
+    });
+
+    loadClosestSightings();
+    animate();
+  </script>
+</body>
+</html>
